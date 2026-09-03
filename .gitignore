@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.env
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+
+# Env files
+admin-vue/.env
+widget-vue/.env
+
+# Misc
+.vscode/
+.DS_Store
+*.log

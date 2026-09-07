@@ -1,13 +1,16 @@
 <script setup>
-import { ref } from "vue";
+import { ref, computed } from "vue";
 
 const props = defineProps({
   disabled: { type: Boolean, default: false },
   maxLength: { type: Number, default: 1000 },
+  poweredByText: { type: String, default: "Powered by Chatbot Platform" },
 });
 const emit = defineEmits(["send"]);
 
 const text = ref("");
+
+const showCounter = computed(() => text.value.length >= props.maxLength * 0.85);
 
 function submit() {
   if (!text.value.trim() || props.disabled) return;
@@ -17,7 +20,7 @@ function submit() {
 </script>
 
 <template>
-  <div class="border-t border-slate-100 bg-white px-4 py-3">
+  <div class="safe-bottom border-t border-slate-100 bg-white px-4 pt-3">
     <div
       class="flex items-center gap-2 rounded-2xl border border-amber-400/60 bg-white px-3 py-2 focus-within:border-amber-500"
     >
@@ -25,7 +28,7 @@ function submit() {
         v-model="text"
         type="text"
         :maxlength="maxLength"
-        placeholder="Ask a question..."
+        placeholder="Ask anything..."
         class="flex-1 border-none bg-transparent text-[14px] text-navy-900 outline-none placeholder:text-slate-400"
         @keydown.enter="submit"
       />
@@ -44,8 +47,8 @@ function submit() {
       </button>
     </div>
     <p class="mt-1.5 flex items-center justify-between px-1 text-[11px] text-slate-400">
-      <span>Powered by Support Assistant</span>
-      <span>{{ text.length }} / {{ maxLength }}</span>
+      <span>{{ poweredByText }}</span>
+      <span v-if="showCounter">{{ text.length }} / {{ maxLength }}</span>
     </p>
   </div>
 </template>

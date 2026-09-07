@@ -4,20 +4,14 @@
  * by default, and expands/shrinks it by listening for postMessage events
  * sent from inside the widget (see App.vue's postResize()).
  *
- * All rounding/shadow is controlled HERE, on the iframe element itself
- * (with overflow: hidden so it actually clips the widget's content to
- * match) - not inside the Vue app. This guarantees the floating-card look
- * is consistent regardless of the iframe's internal viewport size, and
- * keeps the widget from ever covering the full page on desktop.
- *
- * On small/mobile screens, the panel expands to fill the viewport instead
- * of staying a fixed 380px box - same pattern Intercom/Crisp/Drift use,
- * since a fixed-width card doesn't fit well on a phone screen.
- *
  * Usage on a client's site:
  *   <script src="https://your-widget-domain.com/embed.js"
  *           data-api-key="sk_..."
- *           data-widget-url="https://your-widget-domain.com"></script>
+ *           data-widget-url="https://your-widget-domain.com"
+ *           data-position="bottom-right"   optional: "bottom-right" | "bottom-left"
+ *           data-offset="20"               optional: px, default 20
+ *           data-z-index="999999"          optional: default 999999
+ *   ></script>
  */
 (function () {
   var scriptTag = document.currentScript;
@@ -29,33 +23,59 @@
     return;
   }
 
-  var widgetOrigin = new URL(widgetUrl).origin;
+  var widgetOrigin;
+  try {
+    widgetOrigin = new URL(widgetUrl).origin;
+  } catch (err) {
+    console.error("Chatbot widget: invalid data-widget-url \"" + widgetUrl + "\".");
+    return;
+  }
 
-  var MARGIN = "20px";
+  var normalizedWidgetUrl = widgetUrl.replace(/\/+$/, "");
+
+  var position = scriptTag.getAttribute("data-position") === "bottom-left" ? "bottom-left" : "bottom-right";
+  var offsetAttr = parseInt(scriptTag.getAttribute("data-offset"), 10);
+  var OFFSET = (isFinite(offsetAttr) && offsetAttr >= 0 ? offsetAttr : 20) + "px";
+  var zIndexAttr = parseInt(scriptTag.getAttribute("data-z-index"), 10);
+  var Z_INDEX = String(isFinite(zIndexAttr) && zIndexAttr > 0 ? zIndexAttr : 999999);
+
   var BUBBLE_SIZE = "64px";
   var DESKTOP_WIDTH = "380px";
   var DESKTOP_HEIGHT = "600px";
-  var MOBILE_BREAKPOINT = 480; // px - below this, go edge-to-edge like every modern chat widget does on phones
+  var MOBILE_BREAKPOINT = 480;
+
+  var MOBILE_HEIGHT = (window.CSS && window.CSS.supports && window.CSS.supports("height", "100dvh"))
+    ? "100dvh"
+    : "100vh";
+
+  var SIDE_PROP = position === "bottom-left" ? "left" : "right";
+  var OTHER_SIDE_PROP = position === "bottom-left" ? "right" : "left";
 
   var iframe = document.createElement("iframe");
-  iframe.src = widgetUrl + "/";
+  iframe.src = normalizedWidgetUrl + "/";
+  iframe.title = "Chat widget";
+  iframe.setAttribute("aria-label", "Chat support");
+  iframe.setAttribute("allow", "clipboard-write");
+
   iframe.style.position = "fixed";
-  iframe.style.bottom = MARGIN;
-  iframe.style.right = MARGIN;
+  iframe.style.bottom = OFFSET;
+  iframe.style[SIDE_PROP] = OFFSET;
+  iframe.style[OTHER_SIDE_PROP] = "auto";
   iframe.style.width = BUBBLE_SIZE;
   iframe.style.height = BUBBLE_SIZE;
   iframe.style.border = "none";
   iframe.style.borderRadius = "9999px";
-  iframe.style.overflow = "hidden"; // together with border-radius, actually clips the widget's content to match
+  iframe.style.overflow = "hidden";
   iframe.style.boxShadow = "0 8px 24px rgba(15, 23, 42, 0.18)";
-  iframe.style.zIndex = "2147483647";
-  // Only the shadow transitions smoothly - width/height/border-radius/
-  // position snap instantly, same as the local dev preview. Animating a
-  // circle morphing into a rectangle over time looks distractingly odd;
-  // an instant snap reads as cleaner and more "modern app" than a slow
-  // stretch.
+  iframe.style.zIndex = Z_INDEX;
+  iframe.style.colorScheme = "normal";
+  iframe.style.display = "block";
+  iframe.style.margin = "0";
+  iframe.style.padding = "0";
+  iframe.style.maxWidth = "none";
+  iframe.style.maxHeight = "none";
+  iframe.style.background = "transparent";
   iframe.style.transition = "box-shadow 0.15s ease";
-  iframe.title = "Chat widget";
 
   document.body.appendChild(iframe);
 
@@ -66,27 +86,23 @@
   function openPanel() {
     if (isMobile()) {
       iframe.style.bottom = "0px";
-      iframe.style.right = "0px";
+      iframe.style[SIDE_PROP] = "0px";
       iframe.style.width = "100vw";
-      iframe.style.height = "100vh";
+      iframe.style.height = MOBILE_HEIGHT;
       iframe.style.borderRadius = "0px";
     } else {
-      iframe.style.bottom = MARGIN;
-      iframe.style.right = MARGIN;
-      // min() clamps against BOTH viewport dimensions so the panel can
-      // never overflow - whether the window is short (laptop screens,
-      // browser zoom at 100%) or narrow - it always shrinks to fit with
-      // the same 20px breathing room the bubble already uses.
-      iframe.style.width = "min(" + DESKTOP_WIDTH + ", calc(100vw - 40px))";
-      iframe.style.height = "min(" + DESKTOP_HEIGHT + ", calc(100vh - 40px))";
+      iframe.style.bottom = OFFSET;
+      iframe.style[SIDE_PROP] = OFFSET;
+      iframe.style.width = "min(" + DESKTOP_WIDTH + ", calc(100vw - " + OFFSET + " * 2))";
+      iframe.style.height = "min(" + DESKTOP_HEIGHT + ", calc(100vh - " + OFFSET + " * 2))";
       iframe.style.borderRadius = "16px";
     }
     iframe.style.boxShadow = "0 20px 48px rgba(15, 23, 42, 0.28)";
   }
 
   function closePanel() {
-    iframe.style.bottom = MARGIN;
-    iframe.style.right = MARGIN;
+    iframe.style.bottom = OFFSET;
+    iframe.style[SIDE_PROP] = OFFSET;
     iframe.style.width = BUBBLE_SIZE;
     iframe.style.height = BUBBLE_SIZE;
     iframe.style.borderRadius = "9999px";

@@ -1,30 +1,31 @@
 import { ref, computed } from "vue";
 import { useApiKey } from "./useApiKey";
 
-// Set VITE_API_BASE_URL at build time for production (e.g. your deployed
-// FastAPI URL). Falls back to localhost for local dev, same as the old
-// widget.html's hardcoded API_URL.
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 function generateSessionId() {
   return "session-" + Math.random().toString(36).slice(2);
 }
 
-const GREETING = {
-  role: "assistant",
-  content:
-    "Hi! I'm your support assistant. I can help you with products, orders, menus, policies, and other questions.",
-};
+function friendlyErrorFor(status) {
+  if (status === 401 || status === 403) {
+    return "This widget isn't configured correctly. Please contact the site owner.";
+  }
+  if (status === 429) {
+    return "You're sending messages a little too fast. Please wait a moment and try again.";
+  }
+  if (status >= 500) {
+    return "Something went wrong on our end. Please try again in a moment.";
+  }
+  return "Sorry, I couldn't process that. Please try again.";
+}
 
-export function useChat() {
+export function useChat(businessNameRef) {
   const { apiKey, isResolved } = useApiKey();
 
-  // Not a const anymore - resetChat() below reassigns this to a brand new
-  // id, so the backend treats the next message as a fresh conversation
-  // with no memory of what came before.
   let sessionId = generateSessionId();
 
-  const messages = ref([{ ...GREETING }]);
+  const messages = ref([]);
   const isSending = ref(false);
   const error = ref(null);
 
@@ -33,8 +34,7 @@ export function useChat() {
     if (!trimmed || isSending.value) return;
 
     if (!apiKey.value) {
-      error.value =
-        "This widget isn't configured correctly - no api_key was received.";
+      error.value = "This widget isn't configured correctly. Please contact the site owner.";
       return;
     }
 
@@ -55,12 +55,14 @@ export function useChat() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        error.value = data.detail || `Something went wrong (${res.status}).`;
+        console.error("Chat request failed:", res.status, data);
+        error.value = friendlyErrorFor(res.status);
         return;
       }
 
       messages.value.push({ role: "assistant", content: data.reply });
     } catch (err) {
+      console.error("Chat request errored:", err);
       error.value = "Can't reach the assistant right now. Please try again.";
     } finally {
       isSending.value = false;
@@ -69,7 +71,7 @@ export function useChat() {
 
   function resetChat() {
     sessionId = generateSessionId();
-    messages.value = [{ ...GREETING }];
+    messages.value = [];
     error.value = null;
   }
 

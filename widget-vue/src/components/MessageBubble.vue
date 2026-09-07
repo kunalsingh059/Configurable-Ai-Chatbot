@@ -6,14 +6,9 @@ import DOMPurify from "dompurify";
 const props = defineProps({
   role: { type: String, required: true }, // "user" | "assistant"
   content: { type: String, required: true },
+  initials: { type: String, default: "AI" },
 });
 
-// Groq/Claude often reply with markdown (lists, **bold**, etc - the system
-// prompt asks for it). User messages stay plain text (no reason to parse
-// markdown someone types, and it avoids interpreting their own input as
-// HTML). marked converts to HTML, DOMPurify strips anything unsafe before
-// it's rendered with v-html - tool results or model output could in theory
-// contain injected HTML, so this isn't just for user input.
 const renderedHtml = computed(() => {
   if (props.role !== "assistant") return null;
   const raw = marked.parse(props.content, { breaks: true });
@@ -34,7 +29,7 @@ const renderedHtml = computed(() => {
           : 'bg-amber-500 text-navy-950'
       "
     >
-      {{ role === "user" ? "You" : "SA" }}
+      {{ role === "user" ? "You" : initials }}
     </div>
     <div
       class="max-w-[75%] rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed"

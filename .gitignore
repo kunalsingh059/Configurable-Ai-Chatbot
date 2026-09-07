@@ -17,3 +17,4 @@ widget-vue/.env
 .vscode/
 .DS_Store
 *.log
+*.timestamp-*.mjs

@@ -2,7 +2,7 @@
 defineProps({
   name: { type: String, default: "Support Assistant" },
 });
-defineEmits(["minimize"]);
+defineEmits(["minimize", "clear"]);
 </script>
 
 <template>
@@ -32,15 +32,24 @@ defineEmits(["minimize"]);
         </div>
       </div>
 
-      <button
-        class="relative z-10 ml-3 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
-        aria-label="Minimize chat"
-        @click="$emit('minimize')"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path d="M6 12h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-        </svg>
-      </button>
+      <div class="relative z-10 ml-3 flex shrink-0 items-center gap-1">
+        <button
+          class="rounded-lg px-2.5 py-1.5 text-xs font-medium text-white/70 transition hover:bg-white/10 hover:text-white"
+          @click="$emit('clear')"
+        >
+          Clear chat
+        </button>
+        <button
+          class="flex h-9 w-9 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
+          aria-label="Minimize chat"
+          title="Minimize"
+          @click="$emit('minimize')"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M6 12h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
     </div>
   </div>
 </template>

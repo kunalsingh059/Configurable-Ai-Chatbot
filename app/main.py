@@ -1,12 +1,21 @@
 from dotenv import load_dotenv
 load_dotenv()  # must run before groq_client.py / auth.py read env vars
 
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from bson import ObjectId
 
 import os
+import logging
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("chatbot_platform")
 from app.db import tools_collection, documents_collection, admin_users_collection
 from app.models import ToolModel, DocumentModel, RegisterModel, LoginModel, BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, derive_business_name, serialize_tool, serialize_document
 from app.dynamic_tools import get_tenant_tools
@@ -15,6 +24,7 @@ from app.mock_llm import run_mock_chat_turn
 from app.groq_client import run_groq_chat_turn
 from app.documents import extract_text, get_tenant_documents
 from app.email_service import send_password_reset_email
+from app.rate_limit import check_rate_limit
 from app.auth import (
     hash_password, verify_password, generate_api_key, create_access_token,
     create_reset_token, verify_reset_token,
@@ -26,19 +36,81 @@ from app.auth import (
 # eventual production choice). Set LLM_PROVIDER in .env.
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "mock").lower()
 
+if LLM_PROVIDER == "mock":
+    # Not a hard failure - mock mode is legitimate for local dev/testing -
+    # but it's easy to forget to set LLM_PROVIDER in a real deploy and never
+    # notice the chatbot is answering with fake canned logic. Make it loud.
+    logger.warning(
+        "LLM_PROVIDER is not set (or set to 'mock') - the chatbot "
+        "is running on FAKE mock responses, not a real model. Set "
+        "LLM_PROVIDER=groq (and GROQ_API_KEY) in .env for real answers."
+    )
+elif LLM_PROVIDER == "groq" and not os.environ.get("GROQ_API_KEY"):
+    # Fail at startup, not on the first person's chat message - same
+    # principle as the SUPERADMIN_USERNAME/PASSWORD check below, just for
+    # a config error that would otherwise only surface as a 500 in prod.
+    raise RuntimeError(
+        "LLM_PROVIDER=groq but GROQ_API_KEY is not set in .env - the app "
+        "cannot start without it."
+    )
+
 # Where admin-vue's reset-password page lives - the emailed link points
 # here with ?token=... appended. Defaults to local dev; set this in .env
 # to your real admin-vue URL once deployed.
-FRONTEND_RESET_URL = os.environ.get("FRONTEND_RESET_URL", "http://localhost:5173/reset-password")
+FRONTEND_RESET_URL = os.environ.get("FRONTEND_RESET_URL", "http://localhost:5174/reset-password")
+
+# Max document upload size in MB - configurable via .env, defaults to 10MB.
+MAX_UPLOAD_SIZE_MB = int(os.environ.get("MAX_UPLOAD_SIZE_MB", "10"))
+
+CHAT_RATE_LIMIT_PER_MINUTE = int(os.environ.get("CHAT_RATE_LIMIT_PER_MINUTE", "10"))
+FORGOT_PASSWORD_RATE_LIMIT_PER_MINUTE = int(os.environ.get("FORGOT_PASSWORD_RATE_LIMIT_PER_MINUTE", "5"))
+
+
+def parse_object_id(id_str: str) -> ObjectId:
+    """ObjectId(some_malformed_string) raises bson.errors.InvalidId, which
+    FastAPI doesn't catch - it surfaces as an ugly unhandled 500. Every
+    endpoint that takes an :id path param should route it through this
+    instead of calling ObjectId() directly, so a bad id cleanly 400s."""
+    if not ObjectId.is_valid(id_str):
+        raise HTTPException(status_code=400, detail="Invalid id format")
+    return ObjectId(id_str)
+
 
 app = FastAPI(title="Chatbot Platform - MVP")
 
+# Comma-separated list of allowed frontend origins, e.g.
+# "http://localhost:5173,http://localhost:5174,https://admin.yourdomain.com"
+# In dev, falls back to both Vue dev server ports so nothing breaks locally.
+_default_dev_origins = "http://localhost:5173,http://localhost:5174"
+CORS_ALLOWED_ORIGINS = [
+    o.strip() for o in os.environ.get("CORS_ALLOWED_ORIGINS", _default_dev_origins).split(",") if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """FastAPI's default 422 body puts `detail` as a list of error objects,
+    e.g. {"detail": [{"loc": [...], "msg": "...", "type": "..."}]}. The
+    frontend's ApiError just reads data.detail and displays it directly,
+    so it expects a plain string - without this handler it renders
+    "[object Object]" instead of the actual validation message. This
+    flattens the first (most relevant) error into one readable string."""
+    first = exc.errors()[0]
+    field = first["loc"][-1] if first["loc"] else "field"
+    message = first["msg"]
+    # Pydantic prefixes custom @field_validator ValueErrors with "Value error, "
+    message = message.removeprefix("Value error, ")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": f"{field}: {message}"},
+    )
+
 
 # TEMPORARY: in-memory session store. Replace with Redis in Day 5.
 SESSIONS: dict[str, list[dict]] = {}
@@ -58,8 +130,8 @@ async def bootstrap_super_admin():
     username = os.environ.get("SUPERADMIN_USERNAME")
     password = os.environ.get("SUPERADMIN_PASSWORD")
     if not username or not password:
-        print(
-            "WARNING: No super admin exists yet, and SUPERADMIN_USERNAME/"
+        logger.warning(
+            "No super admin exists yet, and SUPERADMIN_USERNAME/"
             "SUPERADMIN_PASSWORD are not set in .env - add them and restart "
             "to create the super admin account."
         )
@@ -73,7 +145,7 @@ async def bootstrap_super_admin():
         "api_key": None,
         "is_active": True,
     })
-    print(f"Super admin account created: {username}")
+    logger.info(f"Super admin account created: {username}")
 
 
 # ------------------------------ Auth endpoints ------------------------------
@@ -129,7 +201,7 @@ async def login(payload: LoginModel):
 
 
 @app.post("/auth/forgot-password")
-async def forgot_password(payload: ForgotPasswordModel):
+async def forgot_password(payload: ForgotPasswordModel, request: Request):
     """
     Always returns the same generic message whether or not the email
     exists - this is deliberate ("email enumeration" prevention). If we
@@ -137,6 +209,8 @@ async def forgot_password(payload: ForgotPasswordModel):
     anyone could use this endpoint to check which emails are registered
     on the platform.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(f"forgot-password:{client_ip}", FORGOT_PASSWORD_RATE_LIMIT_PER_MINUTE)
     user = await admin_users_collection.find_one({"email": payload.email})
     if user is not None:
         token = create_reset_token(user)
@@ -144,18 +218,23 @@ async def forgot_password(payload: ForgotPasswordModel):
         try:
             send_password_reset_email(payload.email, reset_link)
         except Exception as e:
-            print(f"Failed to send password reset email to {payload.email}: {e}")
+            logger.error(f"Failed to send password reset email to {payload.email}: {e}")
 
     return {"message": "If that email is registered, a password reset link has been sent."}
 
 
 @app.post("/auth/reset-password")
 async def reset_password(payload: ResetPasswordModel):
-    username = verify_reset_token(payload.token)
+    username = await verify_reset_token(payload.token)
 
     result = await admin_users_collection.update_one(
         {"username": username},
-        {"$set": {"password_hash": hash_password(payload.new_password)}},
+        {
+            "$set": {"password_hash": hash_password(payload.new_password)},
+            # Bumping this invalidates the token just used (and any other
+            # unused reset links for this account) - see auth.py.
+            "$inc": {"reset_token_version": 1},
+        },
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -186,7 +265,7 @@ async def list_business_owners(_admin: dict = Depends(get_current_super_admin)):
 @app.post("/superadmin/business-owners/{owner_id}/activate")
 async def activate_business_owner(owner_id: str, _admin: dict = Depends(get_current_super_admin)):
     result = await admin_users_collection.update_one(
-        {"_id": ObjectId(owner_id), "role": "business_owner"},
+        {"_id": parse_object_id(owner_id), "role": "business_owner"},
         {"$set": {"is_active": True}},
     )
     if result.matched_count == 0:
@@ -197,7 +276,7 @@ async def activate_business_owner(owner_id: str, _admin: dict = Depends(get_curr
 @app.post("/superadmin/business-owners/{owner_id}/deactivate")
 async def deactivate_business_owner(owner_id: str, _admin: dict = Depends(get_current_super_admin)):
     result = await admin_users_collection.update_one(
-        {"_id": ObjectId(owner_id), "role": "business_owner"},
+        {"_id": parse_object_id(owner_id), "role": "business_owner"},
         {"$set": {"is_active": False}},
     )
     if result.matched_count == 0:
@@ -220,6 +299,7 @@ class ChatResponse(BaseModel):
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_key)):
+    check_rate_limit(f"chat:{tenant_id}", CHAT_RATE_LIMIT_PER_MINUTE)
     conversation = SESSIONS.get(req.session_id, [])
     conversation.append({"role": "user", "content": req.message})
 
@@ -296,17 +376,17 @@ async def update_tool(tool_id: str, tool: ToolModel, tenant_id: str = Depends(ge
     data = tool.dict()
     data["tenant_id"] = tenant_id
     result = await tools_collection.update_one(
-        {"_id": ObjectId(tool_id), "tenant_id": tenant_id}, {"$set": data}
+        {"_id": parse_object_id(tool_id), "tenant_id": tenant_id}, {"$set": data}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Tool not found")
-    updated = await tools_collection.find_one({"_id": ObjectId(tool_id)})
+    updated = await tools_collection.find_one({"_id": parse_object_id(tool_id)})
     return serialize_tool(updated)
 
 
 @app.delete("/admin/tools/{tool_id}")
 async def delete_tool(tool_id: str, tenant_id: str = Depends(get_current_business_owner)):
-    result = await tools_collection.delete_one({"_id": ObjectId(tool_id), "tenant_id": tenant_id})
+    result = await tools_collection.delete_one({"_id": parse_object_id(tool_id), "tenant_id": tenant_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Tool not found")
     return {"status": "deleted"}
@@ -324,7 +404,15 @@ async def upload_document(
     file: UploadFile = File(...),
     tenant_id: str = Depends(get_current_business_owner),
 ):
-    file_bytes = await file.read()
+    # Read up to (limit + 1) bytes only - never pull an arbitrarily large
+    # file fully into memory just to find out afterwards it's too big.
+    max_bytes = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    file_bytes = await file.read(max_bytes + 1)
+    if len(file_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large - max {MAX_UPLOAD_SIZE_MB}MB",
+        )
     text = extract_text(file.filename, file_bytes)
     doc = DocumentModel(tenant_id=tenant_id, name=file.filename, content=text)
     result = await documents_collection.insert_one(doc.dict())
@@ -334,7 +422,7 @@ async def upload_document(
 
 @app.delete("/admin/documents/{doc_id}")
 async def delete_document(doc_id: str, tenant_id: str = Depends(get_current_business_owner)):
-    result = await documents_collection.delete_one({"_id": ObjectId(doc_id), "tenant_id": tenant_id})
+    result = await documents_collection.delete_one({"_id": parse_object_id(doc_id), "tenant_id": tenant_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Document not found")
     return {"status": "deleted"}
@@ -343,4 +431,3 @@ async def delete_document(doc_id: str, tenant_id: str = Depends(get_current_busi
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-

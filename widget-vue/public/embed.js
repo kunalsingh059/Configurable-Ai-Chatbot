@@ -49,8 +49,12 @@
   iframe.style.overflow = "hidden"; // together with border-radius, actually clips the widget's content to match
   iframe.style.boxShadow = "0 8px 24px rgba(15, 23, 42, 0.18)";
   iframe.style.zIndex = "2147483647";
-  iframe.style.transition =
-    "width 0.2s ease, height 0.2s ease, border-radius 0.2s ease, bottom 0.2s ease, right 0.2s ease, box-shadow 0.2s ease";
+  // Only the shadow transitions smoothly - width/height/border-radius/
+  // position snap instantly, same as the local dev preview. Animating a
+  // circle morphing into a rectangle over time looks distractingly odd;
+  // an instant snap reads as cleaner and more "modern app" than a slow
+  // stretch.
+  iframe.style.transition = "box-shadow 0.15s ease";
   iframe.title = "Chat widget";
 
   document.body.appendChild(iframe);
@@ -69,10 +73,11 @@
     } else {
       iframe.style.bottom = MARGIN;
       iframe.style.right = MARGIN;
-      iframe.style.width = DESKTOP_WIDTH;
-      // min() caps the panel against the real viewport height so it never
-      // gets clipped on shorter screens (laptops, smaller monitors) - 40px
-      // accounts for the same top/bottom margin the bubble already uses.
+      // min() clamps against BOTH viewport dimensions so the panel can
+      // never overflow - whether the window is short (laptop screens,
+      // browser zoom at 100%) or narrow - it always shrinks to fit with
+      // the same 20px breathing room the bubble already uses.
+      iframe.style.width = "min(" + DESKTOP_WIDTH + ", calc(100vw - 40px))";
       iframe.style.height = "min(" + DESKTOP_HEIGHT + ", calc(100vh - 40px))";
       iframe.style.borderRadius = "16px";
     }

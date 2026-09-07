@@ -75,17 +75,29 @@ def create_reset_token(user: dict) -> str:
     link. Deliberately a SEPARATE token type from create_access_token - the
     "purpose" claim means even if someone got hold of a reset link, they
     could never use it as a login session, and vice versa.
+
+    Also embeds the user's current reset_token_version ("v") - this is what
+    makes the token one-time-use. A bare JWT can't be revoked once issued
+    (it's just a signed blob, nothing to delete server-side), so instead
+    every successful password reset increments reset_token_version in the
+    DB. verify_reset_token compares the token's "v" against the current DB
+    value - once they diverge, the token is dead, even though it hasn't
+    expired yet. This also means requesting a new reset link invalidates
+    any older unused link for that account, which is the right behavior.
     """
     payload = {
         "sub": user["username"],
         "purpose": "password_reset",
+        "v": user.get("reset_token_version", 0),
         "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def verify_reset_token(token: str) -> str:
-    """Returns the username the token was issued for, or raises HTTPException."""
+async def verify_reset_token(token: str) -> str:
+    """Returns the username the token was issued for, or raises HTTPException.
+    Async because it needs to check the token's version against the current
+    DB value - see create_reset_token's docstring for why."""
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
@@ -96,7 +108,18 @@ def verify_reset_token(token: str) -> str:
     if payload.get("purpose") != "password_reset":
         raise HTTPException(status_code=400, detail="This reset link is invalid.")
 
-    return payload["sub"]
+    username = payload["sub"]
+    user = await admin_users_collection.find_one({"username": username})
+    if user is None:
+        raise HTTPException(status_code=400, detail="This reset link is invalid.")
+
+    if payload.get("v", 0) != user.get("reset_token_version", 0):
+        raise HTTPException(
+            status_code=400,
+            detail="This reset link has already been used or is no longer valid. Please request a new one.",
+        )
+
+    return username
 
 
 def _decode_token(authorization: str) -> dict:

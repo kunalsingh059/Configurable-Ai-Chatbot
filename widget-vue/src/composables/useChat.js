@@ -6,18 +6,25 @@ import { useApiKey } from "./useApiKey";
 // widget.html's hardcoded API_URL.
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
-const sessionId = "session-" + Math.random().toString(36).slice(2);
+function generateSessionId() {
+  return "session-" + Math.random().toString(36).slice(2);
+}
+
+const GREETING = {
+  role: "assistant",
+  content:
+    "Hi! I'm your support assistant. I can help you with products, orders, menus, policies, and other questions.",
+};
 
 export function useChat() {
   const { apiKey, isResolved } = useApiKey();
 
-  const messages = ref([
-    {
-      role: "assistant",
-      content:
-        "Hi! I'm your support assistant. I can help you with products, orders, menus, policies, and other questions.",
-    },
-  ]);
+  // Not a const anymore - resetChat() below reassigns this to a brand new
+  // id, so the backend treats the next message as a fresh conversation
+  // with no memory of what came before.
+  let sessionId = generateSessionId();
+
+  const messages = ref([{ ...GREETING }]);
   const isSending = ref(false);
   const error = ref(null);
 
@@ -60,7 +67,13 @@ export function useChat() {
     }
   }
 
+  function resetChat() {
+    sessionId = generateSessionId();
+    messages.value = [{ ...GREETING }];
+    error.value = null;
+  }
+
   const hasApiKey = computed(() => !!apiKey.value);
 
-  return { messages, isSending, error, sendMessage, hasApiKey, isResolved };
+  return { messages, isSending, error, sendMessage, hasApiKey, isResolved, resetChat };
 }

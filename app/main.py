@@ -300,7 +300,15 @@ class ChatResponse(BaseModel):
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_key)):
     check_rate_limit(f"chat:{tenant_id}", CHAT_RATE_LIMIT_PER_MINUTE)
-    conversation = SESSIONS.get(req.session_id, [])
+
+    # Scoped by tenant_id, not just session_id - session_id is a random
+    # string the widget generates client-side (Math.random()), so two
+    # different tenants' widgets could in principle generate the same one.
+    # Without the tenant_id prefix, that collision would leak one tenant's
+    # conversation history into another tenant's chat.
+    session_key = f"{tenant_id}:{req.session_id}"
+
+    conversation = SESSIONS.get(session_key, [])
     conversation.append({"role": "user", "content": req.message})
 
     if LLM_PROVIDER == "mock":
@@ -310,7 +318,7 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
     else:
         reply_text, updated_conversation = await run_chat_turn(tenant_id, conversation)
 
-    SESSIONS[req.session_id] = updated_conversation
+    SESSIONS[session_key] = updated_conversation
     return ChatResponse(reply=reply_text)
 
 @app.get("/widget/config")

@@ -42,8 +42,8 @@ export const useAuthStore = defineStore("auth", {
       localStorage.setItem("admin_business_name", name);
     },
 
-    async register(tenantId, username, email, password) {
-      return api.register({ tenant_id: tenantId, username, email, password });
+    async register(tenantId, businessName, username, email, password) {
+      return api.register({ tenant_id: tenantId, business_name: businessName, username, email, password });
     },
 
     logout() {

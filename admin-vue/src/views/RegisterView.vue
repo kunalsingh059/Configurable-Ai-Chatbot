@@ -48,7 +48,7 @@ async function submit() {
   error.value = null;
   isSubmitting.value = true;
   try {
-    await auth.register(tenantId.value.trim(), username.value.trim(), email.value.trim(), password.value);
+    await auth.register(tenantId.value.trim(), businessName.value.trim(), username.value.trim(), email.value.trim(), password.value);
     toast.success("Account created - awaiting activation.");
     succeeded.value = true;
   } catch (err) {

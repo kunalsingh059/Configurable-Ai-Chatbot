@@ -162,12 +162,21 @@ async def get_current_super_admin(authorization: str = Header(None)) -> dict:
     return payload
 
 
-async def get_tenant_from_api_key(x_api_key: str = Header(None)) -> str:
+async def get_tenant_from_api_key(
+    x_api_key: str = Header(None),
+    origin: str = Header(None),
+    referer: str = Header(None),
+) -> str:
     """
     Dependency for /chat. Resolves which tenant an API key belongs to, and
     rejects the request if that business owner has been deactivated - this
     is what makes deactivation stop a live chatbot immediately, not just
     block the admin panel.
+
+    Also checks the request's Origin/Referer against that business's
+    allowed_domains (if configured) - this is what stops a leaked
+    api_key from being used on someone else's website, since the key
+    itself is always visible in client-side HTML by design.
     """
     if not x_api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
@@ -177,5 +186,15 @@ async def get_tenant_from_api_key(x_api_key: str = Header(None)) -> str:
         raise HTTPException(status_code=401, detail="Invalid API key")
     if not user.get("is_active", False):
         raise HTTPException(status_code=403, detail="This chatbot is currently unavailable")
+
+    allowed_domains = user.get("allowed_domains") or []
+    if allowed_domains:
+        request_origin = origin or referer or ""
+        host = request_origin.split("//")[-1].split("/")[0].split(":")[0]
+        if not any(host == d or host.endswith("." + d) for d in allowed_domains):
+            raise HTTPException(
+                status_code=403,
+                detail="This chatbot is not authorized for this website.",
+            )
 
     return user["tenant_id"]

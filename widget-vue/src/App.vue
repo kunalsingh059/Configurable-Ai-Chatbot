@@ -39,17 +39,17 @@ const isStandalone = window.parent === window;
 </script>
 
 <template>
-  <div
-    class="flex h-screen w-full items-end justify-end overflow-hidden"
-    :class="isStandalone ? 'bg-slate-100 sm:p-5' : 'bg-transparent'"
-  >
-    <WidgetLauncher v-if="!isOpen" @click="isOpen = true" />
-
     <div
-      v-else
-      class="relative flex flex-col overflow-hidden bg-white"
-      :class="isStandalone ? 'h-full w-full sm:h-[600px] sm:w-[380px] sm:rounded-2xl sm:shadow-2xl' : 'h-full w-full'"
+      class="flex h-screen w-full items-end justify-end overflow-hidden"
+      :class="isStandalone ? 'bg-slate-100 p-5' : 'bg-transparent'"
     >
+      <WidgetLauncher v-if="!isOpen" @click="isOpen = true" />
+
+      <div
+        v-else
+        class="relative flex flex-col overflow-hidden bg-white"
+        :class="isStandalone ? 'h-[600px] max-h-[calc(100vh-2.5rem)] w-[380px] max-w-[calc(100vw-2.5rem)] rounded-2xl shadow-2xl' : 'h-full w-full'"
+      >
       <ChatHeader
         :name="businessName"
         :initials="initials"

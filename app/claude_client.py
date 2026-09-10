@@ -15,7 +15,7 @@ Flow:
 
 import os
 from anthropic import AsyncAnthropic
-from app.dynamic_tools import get_tenant_tools, build_claude_schema, execute_tool
+from app.dynamic_tools import get_tenant_tools_for_execution, build_claude_schema, execute_tool, format_tool_result_for_llm
 from app.documents import build_documents_context
 
 # Lazy client - only created the first time it's actually needed, so the app
@@ -59,7 +59,7 @@ async def run_chat_turn(tenant_id: str, conversation: list[dict]) -> tuple[str, 
 
     Returns: (final_text_reply, updated_conversation)
     """
-    tenant_tools = await get_tenant_tools(tenant_id)
+    tenant_tools = await get_tenant_tools_for_execution(tenant_id)
     tool_schemas = [build_claude_schema(t) for t in tenant_tools]
     tools_by_name = {t["name"]: t for t in tenant_tools}
 
@@ -100,7 +100,7 @@ async def run_chat_turn(tenant_id: str, conversation: list[dict]) -> tuple[str, 
                 {
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": str(result),
+                    "content": format_tool_result_for_llm(result),
                 }
             )
 

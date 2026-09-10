@@ -39,6 +39,27 @@ class ToolModel(BaseModel):
     url_template: str
     headers: dict = {}
     params_schema: dict
+    # Optional allowlist of top-level keys to keep from a successful JSON
+    # response before it's sent to the LLM. Empty = send everything
+    # (subject to the character truncation in format_tool_result_for_llm).
+    # Live APIs often return far more than a chat answer needs - Open Food
+    # Facts, for example, returns 100+ fields per product - so trimming to
+    # just the fields that matter keeps every follow-up turn cheaper and
+    # keeps the model from getting distracted by irrelevant data.
+    response_fields: list[str] = []
+
+
+class ToolTestModel(BaseModel):
+    """Body for the 'test this tool live' admin action - same shape as a
+    tool's request-building fields, minus the params_schema (the admin
+    supplies actual sample params directly instead of a schema to
+    validate against, since this is a one-off manual run, not something
+    the LLM is calling)."""
+    method: str = "GET"
+    url_template: str
+    headers: dict = {}
+    params: dict = {}
+    response_fields: list[str] = []
 
 
 class DocumentModel(BaseModel):
@@ -123,7 +144,18 @@ def derive_business_name(tenant_id: str) -> str:
 
 def serialize_tool(doc: dict) -> dict:
     """Mongo's _id is an ObjectId, not JSON-serializable by default -
-    convert to a plain string id for API responses."""
+    convert to a plain string id for API responses.
+
+    SECURITY: headers may contain API keys/Bearer tokens for the business
+    owner's own third-party integration - this is the admin-facing (masked)
+    serializer, used by GET/POST/PUT /admin/tools. It returns only the
+    HEADER NAMES (header_keys), never the encrypted-at-rest values, so a
+    stored secret is never sent to the browser. Runtime chat execution uses
+    get_tenant_tools_for_execution() instead, which decrypts real values
+    server-side only - see dynamic_tools.py."""
+    from app.crypto import decrypt_headers  # local import avoids a hard
+    # dependency for any code that only needs the other model classes
+    header_keys = list(decrypt_headers(doc.get("headers_encrypted")).keys())
     return {
         "id": str(doc["_id"]),
         "tenant_id": doc["tenant_id"],
@@ -131,8 +163,9 @@ def serialize_tool(doc: dict) -> dict:
         "description": doc["description"],
         "method": doc.get("method", "GET"),
         "url_template": doc["url_template"],
-        "headers": doc.get("headers", {}),
+        "header_keys": header_keys,
         "params_schema": doc["params_schema"],
+        "response_fields": doc.get("response_fields", []),
     }
 
 

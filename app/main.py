@@ -5,20 +5,27 @@ from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 
 import os
+import time
 import logging
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,  # uvicorn configures logging on its own startup before this
+    # runs - basicConfig() silently no-ops if logging is already configured
+    # unless force=True is passed, which was very likely swallowing every
+    # logger.info()/logger.error() call in this app up to now.
 )
 logger = logging.getLogger("chatbot_platform")
 from app.db import tools_collection, documents_collection, admin_users_collection
-from app.models import ToolModel, DocumentModel, RegisterModel, LoginModel, BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, derive_business_name, serialize_tool, serialize_document
-from app.dynamic_tools import get_tenant_tools
+from app.models import ToolModel, ToolTestModel, DocumentModel, RegisterModel, LoginModel, BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, derive_business_name, serialize_tool, serialize_document
+from app.dynamic_tools import get_tenant_tools, execute_tool, format_tool_result_for_llm
+from app.crypto import encrypt_headers
 from app.claude_client import run_chat_turn
 from app.mock_llm import run_mock_chat_turn
 from app.groq_client import run_groq_chat_turn
@@ -62,8 +69,18 @@ FRONTEND_RESET_URL = os.environ.get("FRONTEND_RESET_URL", "http://localhost:5174
 # Max document upload size in MB - configurable via .env, defaults to 10MB.
 MAX_UPLOAD_SIZE_MB = int(os.environ.get("MAX_UPLOAD_SIZE_MB", "10"))
 
-CHAT_RATE_LIMIT_PER_MINUTE = int(os.environ.get("CHAT_RATE_LIMIT_PER_MINUTE", "10"))
+# Two-tier chat rate limiting - see the /chat endpoint for why both exist.
+# Per-customer: generous for one genuine human typing (roughly 1 msg/3sec),
+# tight enough to stop a single scripted abuser. Per-business: raised from
+# the original 10/min (sized only to stop obvious abuse, not real traffic)
+# to something that can actually support many customers of one business
+# chatting concurrently - tune this based on your actual Groq plan's
+# capacity and what you're comfortable a single business could cost you
+# per minute at the ceiling.
+CHAT_SESSION_RATE_LIMIT_PER_MINUTE = int(os.environ.get("CHAT_SESSION_RATE_LIMIT_PER_MINUTE", "20"))
+CHAT_RATE_LIMIT_PER_MINUTE = int(os.environ.get("CHAT_RATE_LIMIT_PER_MINUTE", "300"))
 FORGOT_PASSWORD_RATE_LIMIT_PER_MINUTE = int(os.environ.get("FORGOT_PASSWORD_RATE_LIMIT_PER_MINUTE", "5"))
+LOGIN_RATE_LIMIT_PER_MINUTE = int(os.environ.get("LOGIN_RATE_LIMIT_PER_MINUTE", "10"))
 
 
 def parse_object_id(id_str: str) -> ObjectId:
@@ -113,7 +130,34 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 # TEMPORARY: in-memory session store. Replace with Redis in Day 5.
-SESSIONS: dict[str, list[dict]] = {}
+# Each value is (last_access_epoch_seconds, conversation_list) - the
+# timestamp lets _cleanup_idle_sessions() evict sessions nobody's used in a
+# while, so this dict doesn't grow forever over days/weeks of traffic.
+SESSIONS: dict[str, tuple[float, list[dict]]] = {}
+
+MAX_MESSAGE_LENGTH = int(os.environ.get("MAX_MESSAGE_LENGTH", "1000"))
+# Messages, not turns - each user+assistant exchange is 2 entries. Trimming
+# this bounds both memory per session AND the Groq token cost of every
+# future message in a long conversation (the full history is resent every turn).
+MAX_CONVERSATION_HISTORY = int(os.environ.get("MAX_CONVERSATION_HISTORY", "20"))
+SESSION_IDLE_TIMEOUT_MINUTES = int(os.environ.get("SESSION_IDLE_TIMEOUT_MINUTES", "60"))
+
+_last_session_cleanup = 0.0
+
+
+def _cleanup_idle_sessions() -> None:
+    """Evicts sessions idle longer than SESSION_IDLE_TIMEOUT_MINUTES. Runs at
+    most once every 5 minutes (not on every request - SESSIONS can hold a
+    lot of entries at scale, no need to sweep it on every single message)."""
+    global _last_session_cleanup
+    now = time.time()
+    if now - _last_session_cleanup < 300:
+        return
+    _last_session_cleanup = now
+    cutoff = now - (SESSION_IDLE_TIMEOUT_MINUTES * 60)
+    stale_keys = [k for k, (last_access, _) in SESSIONS.items() if last_access < cutoff]
+    for k in stale_keys:
+        del SESSIONS[k]
 
 
 # ------------------------- Bootstrap the super admin -------------------------
@@ -121,6 +165,38 @@ SESSIONS: dict[str, list[dict]] = {}
 # team should ever hold that account. Instead, it's created automatically on
 # startup from SUPERADMIN_USERNAME / SUPERADMIN_PASSWORD in .env, but only if
 # one doesn't already exist yet (so this is safe to run on every restart).
+@app.on_event("startup")
+async def ensure_indexes():
+    """
+    Enforces uniqueness at the DB level, not just via find-before-insert
+    checks in /auth/register (which have a race window under concurrent
+    signups - two requests could both pass the find_one check before
+    either insert completes). Runs on every startup; create_index is
+    idempotent, so this is a no-op after the first successful run.
+
+    email/tenant_id/api_key use sparse or a partial filter instead of a
+    plain unique index because the super admin document doesn't have
+    those fields the same way business owners do (email is entirely
+    absent; tenant_id/api_key are explicitly None) - a plain unique index
+    would treat every future None/missing value as a duplicate of the
+    super admin's and reject it.
+    """
+    try:
+        await admin_users_collection.create_index("username", unique=True)
+        await admin_users_collection.create_index("email", unique=True, sparse=True)
+        await admin_users_collection.create_index(
+            "tenant_id", unique=True, partialFilterExpression={"tenant_id": {"$type": "string"}}
+        )
+        await admin_users_collection.create_index(
+            "api_key", unique=True, partialFilterExpression={"api_key": {"$type": "string"}}
+        )
+    except Exception as e:
+        # Don't crash startup over this - most likely cause is duplicate
+        # data already in the DB from before these indexes existed, which
+        # needs manual cleanup, not a blocked boot.
+        logger.error(f"Failed to create MongoDB unique indexes (duplicate data may already exist): {e}")
+
+
 @app.on_event("startup")
 async def bootstrap_super_admin():
     existing = await admin_users_collection.find_one({"role": "super_admin"})
@@ -164,16 +240,28 @@ async def register_business_owner(payload: RegisterModel):
     if existing_email is not None:
         raise HTTPException(status_code=400, detail="An account with this email already exists.")
 
-    await admin_users_collection.insert_one({
-        "role": "business_owner",
-        "tenant_id": payload.tenant_id,
-        "business_name": payload.business_name or derive_business_name(payload.tenant_id),
-        "username": payload.username,
-        "email": payload.email,
-        "password_hash": hash_password(payload.password),
-        "api_key": generate_api_key(),
-        "is_active": False,
-    })
+    try:
+        await admin_users_collection.insert_one({
+            "role": "business_owner",
+            "tenant_id": payload.tenant_id,
+            "business_name": payload.business_name or derive_business_name(payload.tenant_id),
+            "username": payload.username,
+            "email": payload.email,
+            "password_hash": hash_password(payload.password),
+            "api_key": generate_api_key(),
+            "is_active": False,
+        })
+    except DuplicateKeyError:
+        # The find_one checks above catch almost every case, but there's a
+        # race window between "check" and "insert" under concurrent
+        # requests - two people could both pass the checks with the same
+        # username/tenant_id/email before either insert lands. The unique
+        # indexes (see ensure_indexes) are what actually prevent the bad
+        # data; this just turns that into a clean 400 instead of a 500.
+        raise HTTPException(
+            status_code=400,
+            detail="That username, business ID, or email is already taken - please try different values.",
+        )
 
     return {
         "message": "Account created. It must be activated by a super admin before you can log in.",
@@ -182,7 +270,14 @@ async def register_business_owner(payload: RegisterModel):
 
 
 @app.post("/auth/login")
-async def login(payload: LoginModel):
+async def login(payload: LoginModel, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    # Two separate limits: by IP (stops one attacker hammering many
+    # accounts) and by username (stops a distributed attack - many IPs -
+    # targeting one specific account). Both must pass.
+    check_rate_limit(f"login-ip:{client_ip}", LOGIN_RATE_LIMIT_PER_MINUTE)
+    check_rate_limit(f"login-user:{payload.username}", LOGIN_RATE_LIMIT_PER_MINUTE)
+
     user = await admin_users_collection.find_one({"username": payload.username})
     if user is None or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid username or password")
@@ -225,19 +320,34 @@ async def forgot_password(payload: ForgotPasswordModel, request: Request):
 
 @app.post("/auth/reset-password")
 async def reset_password(payload: ResetPasswordModel):
-    username = await verify_reset_token(payload.token)
+    username, token_version = await verify_reset_token(payload.token)
 
+    # Atomic: the filter requires reset_token_version to STILL equal what
+    # this token was issued for, and the increment happens in the same
+    # operation. If two requests race with the same token, only the first
+    # to reach Mongo can match this filter - by the time the second's
+    # update runs, the version has already moved, so modified_count is 0
+    # for it. This closes the check-then-act race that existed when
+    # verify_reset_token's check and this update were separate steps.
     result = await admin_users_collection.update_one(
-        {"username": username},
+        {"username": username, "reset_token_version": token_version},
         {
             "$set": {"password_hash": hash_password(payload.new_password)},
-            # Bumping this invalidates the token just used (and any other
-            # unused reset links for this account) - see auth.py.
             "$inc": {"reset_token_version": 1},
         },
     )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Account not found")
+    if result.modified_count == 0:
+        logger.info(
+            f"Reset token for '{username}' passed the pre-check (version "
+            f"{token_version}) but the atomic update still found no match - "
+            "another request already consumed this exact token in the gap "
+            "between the pre-check and this update (classic double-submit/"
+            "duplicate-tab race), not a fresh mismatch."
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="This reset link has already been used or is no longer valid. Please request a new one.",
+        )
 
     return {"message": "Password updated. You can now log in with your new password."}
 
@@ -290,7 +400,7 @@ async def deactivate_business_owner(owner_id: str, _admin: dict = Depends(get_cu
 # owner has been deactivated.
 class ChatRequest(BaseModel):
     session_id: str
-    message: str
+    message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_LENGTH)
 
 
 class ChatResponse(BaseModel):
@@ -299,7 +409,15 @@ class ChatResponse(BaseModel):
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_key)):
+    # Two-tier limiting: per-CUSTOMER first (stops one abusive individual
+    # from hammering), then per-BUSINESS overall (an aggregate ceiling that
+    # protects total Groq cost even if many different real customers are
+    # legitimately chatting at once). Without the per-customer tier, one
+    # bad actor could burn through the entire business's shared budget and
+    # lock out every other real customer talking to that same business.
+    check_rate_limit(f"chat-session:{tenant_id}:{req.session_id}", CHAT_SESSION_RATE_LIMIT_PER_MINUTE)
     check_rate_limit(f"chat:{tenant_id}", CHAT_RATE_LIMIT_PER_MINUTE)
+    _cleanup_idle_sessions()
 
     # Scoped by tenant_id, not just session_id - session_id is a random
     # string the widget generates client-side (Math.random()), so two
@@ -308,7 +426,7 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
     # conversation history into another tenant's chat.
     session_key = f"{tenant_id}:{req.session_id}"
 
-    conversation = SESSIONS.get(session_key, [])
+    _, conversation = SESSIONS.get(session_key, (0.0, []))
     conversation.append({"role": "user", "content": req.message})
 
     if LLM_PROVIDER == "mock":
@@ -318,7 +436,10 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
     else:
         reply_text, updated_conversation = await run_chat_turn(tenant_id, conversation)
 
-    SESSIONS[session_key] = updated_conversation
+    # Keep only the most recent messages - see MAX_CONVERSATION_HISTORY comment above.
+    updated_conversation = updated_conversation[-MAX_CONVERSATION_HISTORY:]
+
+    SESSIONS[session_key] = (time.time(), updated_conversation)
     return ChatResponse(reply=reply_text)
 
 @app.get("/widget/config")
@@ -374,6 +495,9 @@ async def list_tools(tenant_id: str = Depends(get_current_business_owner)):
 async def create_tool(tool: ToolModel, tenant_id: str = Depends(get_current_business_owner)):
     data = tool.dict()
     data["tenant_id"] = tenant_id  # override whatever the client sent - trust the token
+    # Never store plaintext headers - encrypt at rest, drop the plaintext
+    # key entirely so it can't accidentally leak via a raw DB dump/backup.
+    data["headers_encrypted"] = encrypt_headers(data.pop("headers", {}))
     result = await tools_collection.insert_one(data)
     created = await tools_collection.find_one({"_id": result.inserted_id})
     return serialize_tool(created)
@@ -383,12 +507,27 @@ async def create_tool(tool: ToolModel, tenant_id: str = Depends(get_current_busi
 async def update_tool(tool_id: str, tool: ToolModel, tenant_id: str = Depends(get_current_business_owner)):
     data = tool.dict()
     data["tenant_id"] = tenant_id
+    submitted_headers = data.pop("headers", {})
+    object_id = parse_object_id(tool_id)
+
+    if submitted_headers:
+        # Admin actually typed new header values - replace what's stored.
+        data["headers_encrypted"] = encrypt_headers(submitted_headers)
+    else:
+        # Empty headers submitted = "I didn't touch this field", not "clear
+        # my secrets" - the admin UI never shows real header values back
+        # (see serialize_tool), so it can't pre-fill them for editing; an
+        # empty submission here just means the field was left blank.
+        # $unset from the $set payload so we don't overwrite the existing
+        # encrypted value with nothing.
+        pass
+
     result = await tools_collection.update_one(
-        {"_id": parse_object_id(tool_id), "tenant_id": tenant_id}, {"$set": data}
+        {"_id": object_id, "tenant_id": tenant_id}, {"$set": data}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Tool not found")
-    updated = await tools_collection.find_one({"_id": parse_object_id(tool_id)})
+    updated = await tools_collection.find_one({"_id": object_id})
     return serialize_tool(updated)
 
 
@@ -398,6 +537,28 @@ async def delete_tool(tool_id: str, tenant_id: str = Depends(get_current_busines
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Tool not found")
     return {"status": "deleted"}
+
+
+@app.post("/admin/tools/test")
+async def test_tool(payload: ToolTestModel, tenant_id: str = Depends(get_current_business_owner)):
+    """Runs a tool's request live with admin-supplied sample params, so a
+    business owner can verify a live API integration (URL, params,
+    headers/auth, and any response-field filter) actually works before
+    saving the tool - or before relying on a customer's chat message to be
+    the first real test of it. Goes through the exact same execute_tool()
+    the LLM uses at runtime, including the SSRF guard and response-field
+    filtering, so a "test passed" result means the real thing will behave
+    the same way. Returns both the (already-filtered) result and the exact
+    string the LLM would receive, so the admin can see the effect of the
+    field filter and truncation before turning a real customer loose on it."""
+    tool = {
+        "method": payload.method,
+        "url_template": payload.url_template,
+        "headers": payload.headers,
+        "response_fields": payload.response_fields,
+    }
+    result = await execute_tool(tool, payload.params)
+    return {"result": result, "llm_preview": format_tool_result_for_llm(result)}
 
 
 # ----------------------- Admin CRUD for documents -----------------------

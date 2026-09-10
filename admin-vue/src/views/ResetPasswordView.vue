@@ -22,6 +22,19 @@ onMounted(() => {
 });
 
 async function submit() {
+  // Guard against a double-click/double-submit: :disabled="isSubmitting"
+  // on the button only takes effect after Vue's next DOM update, which is
+  // asynchronous - two clicks close enough together can both invoke
+  // submit() before the button visually disables. Checking isSubmitting
+  // here, synchronously, blocks the second call immediately in memory,
+  // not just in the DOM. Without this, a double-click can fire two
+  // /auth/reset-password requests with the same token: the first
+  // succeeds, the second correctly gets rejected as "already used" by
+  // the backend's one-time-use check - and if that error resolves after
+  // the first request's success, it overwrites the success message even
+  // though the password WAS actually changed.
+  if (isSubmitting.value) return;
+
   error.value = null;
 
   if (newPassword.value !== confirmPassword.value) {

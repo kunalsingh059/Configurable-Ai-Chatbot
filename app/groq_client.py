@@ -20,7 +20,7 @@ no more tool calls) stays conceptually identical.
 import os
 import json
 from groq import AsyncGroq
-from app.dynamic_tools import get_tenant_tools, execute_tool
+from app.dynamic_tools import get_tenant_tools_for_execution, execute_tool, format_tool_result_for_llm
 from app.documents import build_documents_context
 
 # Fast + good tool-calling quality on Groq's free tier.
@@ -77,7 +77,7 @@ async def run_groq_chat_turn(tenant_id: str, conversation: list[dict]) -> tuple[
     accepting the same shape as claude_client.run_chat_turn so main.py
     doesn't need to know which provider is active.
     """
-    tenant_tools = await get_tenant_tools(tenant_id)
+    tenant_tools = await get_tenant_tools_for_execution(tenant_id)
     tool_schemas = [_to_openai_tool_schema(t) for t in tenant_tools]
     tools_by_name = {t["name"]: t for t in tenant_tools}
 
@@ -143,7 +143,7 @@ async def run_groq_chat_turn(tenant_id: str, conversation: list[dict]) -> tuple[
             else:
                 result = await execute_tool(tool, args)
 
-            tool_msg = {"role": "tool", "tool_call_id": tc.id, "content": str(result)}
+            tool_msg = {"role": "tool", "tool_call_id": tc.id, "content": format_tool_result_for_llm(result)}
             messages.append(tool_msg)
             tool_result_messages.append(tool_msg)
 

@@ -22,6 +22,7 @@ the platform right now."
 
 import os
 import secrets
+import logging
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -30,6 +31,8 @@ from argon2.exceptions import VerifyMismatchError
 from fastapi import Header, HTTPException
 
 from app.db import admin_users_collection
+
+logger = logging.getLogger("chatbot_platform")
 
 JWT_SECRET = os.environ.get("JWT_SECRET")
 if not JWT_SECRET:
@@ -94,10 +97,19 @@ def create_reset_token(user: dict) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-async def verify_reset_token(token: str) -> str:
-    """Returns the username the token was issued for, or raises HTTPException.
-    Async because it needs to check the token's version against the current
-    DB value - see create_reset_token's docstring for why."""
+async def verify_reset_token(token: str) -> tuple[str, int]:
+    """Returns (username, token_version) the token was issued for, or
+    raises HTTPException. Async because it needs to check the token's
+    version against the current DB value - see create_reset_token's
+    docstring for why.
+
+    This is a fast-fail pre-check with a clear user-facing message
+    (expired/invalid/already-used) - it is NOT itself the atomic
+    consumption guarantee. The caller (reset_password in main.py) still
+    needs to re-check the version in its update filter, since two
+    concurrent requests could both pass this check before either one's
+    update lands. Returning token_version is what lets that final update
+    be atomic instead of relying on this check alone."""
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
@@ -109,17 +121,25 @@ async def verify_reset_token(token: str) -> str:
         raise HTTPException(status_code=400, detail="This reset link is invalid.")
 
     username = payload["sub"]
+    token_version = payload.get("v", 0)
     user = await admin_users_collection.find_one({"username": username})
     if user is None:
         raise HTTPException(status_code=400, detail="This reset link is invalid.")
 
-    if payload.get("v", 0) != user.get("reset_token_version", 0):
+    if token_version != user.get("reset_token_version", 0):
+        logger.info(
+            f"Reset token rejected for '{username}': token was issued for "
+            f"version {token_version}, but current version is "
+            f"{user.get('reset_token_version', 0)} - this token is stale "
+            "(likely an older/already-used email link, not the most "
+            "recently requested one)."
+        )
         raise HTTPException(
             status_code=400,
             detail="This reset link has already been used or is no longer valid. Please request a new one.",
         )
 
-    return username
+    return username, token_version
 
 
 def _decode_token(authorization: str) -> dict:

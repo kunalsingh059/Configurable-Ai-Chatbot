@@ -11,7 +11,7 @@ and want to see the real reasoning.
 """
 
 import re
-from app.dynamic_tools import get_tenant_tools, execute_tool
+from app.dynamic_tools import get_tenant_tools_for_execution, execute_tool
 
 
 async def run_mock_chat_turn(tenant_id: str, conversation: list[dict]) -> tuple[str, list[dict]]:
@@ -21,7 +21,7 @@ async def run_mock_chat_turn(tenant_id: str, conversation: list[dict]) -> tuple[
             last_user_msg = msg["content"].lower()
             break
 
-    tenant_tools = await get_tenant_tools(tenant_id)
+    tenant_tools = await get_tenant_tools_for_execution(tenant_id)
 
     # Naive matching: does the tool's name (underscores as spaces) or any
     # word from its description appear in the user's message?

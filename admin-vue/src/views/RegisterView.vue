@@ -45,6 +45,7 @@ function onTenantIdInput() {
 }
 
 async function submit() {
+  if (isSubmitting.value) return; // guard against double-click firing two registrations before the button visually disables
   error.value = null;
   isSubmitting.value = true;
   try {

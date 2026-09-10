@@ -52,6 +52,7 @@ export const api = {
   updateTool: (token, id, tool) =>
     request(`/admin/tools/${id}`, { method: "PUT", body: tool, token }),
   deleteTool: (token, id) => request(`/admin/tools/${id}`, { method: "DELETE", token }),
+  testTool: (token, payload) => request("/admin/tools/test", { method: "POST", body: payload, token }),
 
   // Business owner - settings
   getBusinessName: (token) => request("/admin/business-name", { token }),

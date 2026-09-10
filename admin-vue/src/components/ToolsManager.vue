@@ -20,10 +20,22 @@ const emptyForm = () => ({
   description: "",
   method: "GET",
   url_template: "",
+  headers: "{}",
+  existingHeaderKeys: [],
   params_schema: '{\n  "type": "object",\n  "properties": {},\n  "required": []\n}',
+  response_fields: "",
 });
 const form = ref(emptyForm());
 const formError = ref(null);
+
+// "Test tool" panel state - lets an admin fire the live request with sample
+// params right from the form, before saving, so a broken URL/header/param
+// shows up here instead of in front of a real customer.
+const testParams = ref("{}");
+const isTesting = ref(false);
+const testError = ref(null);
+const testResult = ref(null); // pretty-printed JSON string, or null if not run yet
+const testPreview = ref(null); // exact string the LLM would receive, after field filtering + truncation
 
 // Delete confirmation state
 const pendingDelete = ref(null); // the tool object awaiting confirmation
@@ -40,10 +52,18 @@ async function load() {
   }
 }
 
+function resetTestPanel() {
+  testParams.value = "{}";
+  testError.value = null;
+  testResult.value = null;
+  testPreview.value = null;
+}
+
 function openCreate() {
   editingId.value = null;
   form.value = emptyForm();
   formError.value = null;
+  resetTestPanel();
   showForm.value = true;
 }
 
@@ -54,14 +74,97 @@ function openEdit(tool) {
     description: tool.description,
     method: tool.method,
     url_template: tool.url_template,
+    // Headers are never sent back by the API once saved (see backend
+    // serialize_tool) - only header_keys (names, no values) are, so this
+    // starts blank on edit. Leaving it blank on save keeps the existing
+    // encrypted headers untouched; typing new ones replaces them entirely.
+    headers: "{}",
+    existingHeaderKeys: tool.header_keys || [],
     params_schema: JSON.stringify(tool.params_schema, null, 2),
+    response_fields: (tool.response_fields || []).join(", "),
   };
   formError.value = null;
+  resetTestPanel();
   showForm.value = true;
+}
+
+// Turns "product_name, ingredients_text, nutriscore_grade" into a clean
+// array, dropping stray commas/whitespace so a trailing comma or extra
+// space doesn't turn into an empty/blank field name.
+function parseResponseFields(text) {
+  return text
+    .split(",")
+    .map((f) => f.trim())
+    .filter(Boolean);
+}
+
+// Shared by submitForm and runTest - both need method/url/headers parsed
+// the same way, and both should fail the same way on bad JSON.
+function parseFormBasics() {
+  let headers;
+  try {
+    headers = JSON.parse(form.value.headers || "{}");
+  } catch {
+    throw new Error("Headers must be valid JSON.");
+  }
+  if (!form.value.url_template.trim()) {
+    throw new Error("URL template is required before testing.");
+  }
+  return { method: form.value.method, url_template: form.value.url_template, headers };
+}
+
+async function runTest() {
+  testError.value = null;
+  testResult.value = null;
+  testPreview.value = null;
+
+  let basics;
+  let params;
+  try {
+    basics = parseFormBasics();
+  } catch (err) {
+    testError.value = err.message;
+    return;
+  }
+  try {
+    params = JSON.parse(testParams.value || "{}");
+  } catch {
+    testError.value = "Sample params must be valid JSON.";
+    return;
+  }
+
+  isTesting.value = true;
+  try {
+    const { result, llm_preview } = await api.testTool(auth.token, {
+      ...basics,
+      params,
+      response_fields: parseResponseFields(form.value.response_fields),
+    });
+    testResult.value = JSON.stringify(result, null, 2);
+    testPreview.value = llm_preview;
+    if (result && result.error) {
+      // Still a "successful" HTTP round-trip through our own API, but the
+      // live call itself failed (bad URL, blocked address, upstream 4xx/
+      // 5xx) - surface that distinctly from a genuine network/auth error.
+      testError.value = result.error;
+    }
+  } catch (err) {
+    testError.value = err instanceof ApiError ? err.message : "Couldn't run the test.";
+  } finally {
+    isTesting.value = false;
+  }
 }
 
 async function submitForm() {
   formError.value = null;
+  let basics;
+  try {
+    basics = parseFormBasics();
+  } catch (err) {
+    formError.value = err.message;
+    return;
+  }
+
   let parsedSchema;
   try {
     parsedSchema = JSON.parse(form.value.params_schema);
@@ -73,10 +176,11 @@ async function submitForm() {
   const payload = {
     name: form.value.name,
     description: form.value.description,
-    method: form.value.method,
-    url_template: form.value.url_template,
-    headers: {},
+    method: basics.method,
+    url_template: basics.url_template,
+    headers: basics.headers,
     params_schema: parsedSchema,
+    response_fields: parseResponseFields(form.value.response_fields),
   };
 
   isSubmitting.value = true;
@@ -121,7 +225,7 @@ onMounted(load);
     <div class="mb-4 flex items-center justify-between">
       <div>
         <h2 class="text-sm font-semibold text-navy-950">Tools</h2>
-        <p class="text-xs text-slate-500">APIs your assistant can call to answer questions.</p>
+        <p class="text-xs text-slate-500">Live APIs your assistant can call to answer questions.</p>
       </div>
       <button
         class="rounded-lg bg-navy-950 px-3 py-2 text-xs font-medium text-white hover:bg-navy-900"
@@ -135,7 +239,7 @@ onMounted(load);
     <p v-if="isLoading" class="text-xs text-slate-400">Loading...</p>
 
     <div v-else-if="tools.length === 0" class="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-xs text-slate-400">
-      No tools yet. Add one so your assistant can look up real data.
+      No tools yet. Add one so your assistant can look up real, live data.
     </div>
 
     <ul v-else class="divide-y divide-slate-100">
@@ -143,6 +247,9 @@ onMounted(load);
         <div class="min-w-0">
           <p class="truncate text-sm font-medium text-navy-950">{{ tool.name }}</p>
           <p class="truncate text-xs text-slate-500">{{ tool.method }} {{ tool.url_template }}</p>
+          <p v-if="tool.response_fields && tool.response_fields.length" class="truncate text-[11px] text-amber-600">
+            Fields: {{ tool.response_fields.join(", ") }}
+          </p>
         </div>
         <div class="flex shrink-0 items-center gap-2">
           <button
@@ -162,8 +269,8 @@ onMounted(load);
     </ul>
 
     <!-- Create / edit tool modal -->
-    <div v-if="showForm" class="fixed inset-0 z-10 flex items-center justify-center bg-black/40 px-4">
-      <div class="w-full max-w-md rounded-2xl bg-white p-5 shadow-lg">
+    <div v-if="showForm" class="fixed inset-0 z-10 flex items-center justify-center bg-black/40 px-4 py-6">
+      <div class="max-h-full w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-lg">
         <h3 class="mb-4 text-sm font-semibold text-navy-950">
           {{ editingId ? "Edit tool" : "Add tool" }}
         </h3>
@@ -188,12 +295,75 @@ onMounted(load);
               <input v-model="form.url_template" required placeholder="https://api.example.com/products/{id}" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500" />
             </div>
           </div>
+          <p class="-mt-2 text-[11px] text-slate-400">
+            Wrap any part the AI should fill in with <code class="rounded bg-slate-100 px-1">{curly braces}</code>, e.g. <code class="rounded bg-slate-100 px-1">{barcode}</code>.
+          </p>
+
           <div>
-            <label class="mb-1 block text-xs font-medium text-slate-600">Params schema (JSON)</label>
+            <label class="mb-1 block text-xs font-medium text-slate-600">
+              Headers (JSON) - for an API key or auth token, e.g. <code class="rounded bg-slate-100 px-1 font-normal">{"\u0022Authorization\u0022: \u0022Bearer sk_...\u0022"}</code>
+            </label>
+            <textarea v-model="form.headers" rows="2" placeholder="{}" class="w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs outline-none focus:border-amber-500"></textarea>
+            <p v-if="editingId && form.existingHeaderKeys.length" class="mt-1 text-[11px] text-slate-400">
+              Currently set: {{ form.existingHeaderKeys.join(", ") }} (values are hidden for security - leave this blank to keep them unchanged, or enter new headers to replace them entirely).
+            </p>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-slate-600">Params schema (JSON) - tells the AI what to fill in</label>
             <textarea v-model="form.params_schema" rows="5" class="w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs outline-none focus:border-amber-500"></textarea>
           </div>
 
+          <div>
+            <label class="mb-1 block text-xs font-medium text-slate-600">
+              Only send the AI these fields (optional, comma-separated)
+            </label>
+            <input
+              v-model="form.response_fields"
+              placeholder="e.g. product_name, ingredients_text, nutriscore_grade"
+              class="w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs outline-none focus:border-amber-500"
+            />
+            <p class="mt-1 text-[11px] text-slate-400">
+              Live APIs often return far more than the AI needs. Leave blank to send the whole response (trimmed if it's very large); list specific top-level fields to keep replies faster and more focused.
+            </p>
+          </div>
+
           <p v-if="formError" class="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">{{ formError }}</p>
+
+          <!-- Test panel: runs the exact same request the AI would make,
+               with sample values you type in here, so you can confirm the
+               live API actually works before saving or handing this to a
+               real customer conversation. -->
+          <div class="rounded-xl border border-slate-200 p-3">
+            <p class="mb-2 text-xs font-medium text-slate-600">Test this tool live</p>
+            <div class="flex items-start gap-2">
+              <textarea
+                v-model="testParams"
+                rows="2"
+                placeholder='{"barcode": "3017624010701"}'
+                class="flex-1 rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs outline-none focus:border-amber-500"
+              ></textarea>
+              <button
+                type="button"
+                :disabled="isTesting"
+                class="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-navy-900 hover:border-amber-500 disabled:opacity-60"
+                @click="runTest"
+              >
+                {{ isTesting ? "Running..." : "Run test" }}
+              </button>
+            </div>
+            <p v-if="testError" class="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">{{ testError }}</p>
+            <div v-if="testResult" class="mt-2 space-y-2">
+              <div>
+                <p class="mb-1 text-[11px] font-medium text-slate-500">Raw result</p>
+                <pre class="max-h-40 overflow-auto rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-navy-900">{{ testResult }}</pre>
+              </div>
+              <div>
+                <p class="mb-1 text-[11px] font-medium text-slate-500">What the AI actually receives</p>
+                <pre class="max-h-40 overflow-auto rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-navy-900">{{ testPreview }}</pre>
+              </div>
+            </div>
+          </div>
 
           <div class="flex justify-end gap-2 pt-2">
             <button type="button" class="rounded-lg px-3 py-2 text-xs font-medium text-slate-600" @click="showForm = false">Cancel</button>

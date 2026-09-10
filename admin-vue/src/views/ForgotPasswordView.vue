@@ -8,6 +8,7 @@ const isSubmitting = ref(false);
 const submitted = ref(false);
 
 async function submit() {
+  if (isSubmitting.value) return; // guard against double-click firing two requests before the button visually disables
   error.value = null;
   isSubmitting.value = true;
   try {

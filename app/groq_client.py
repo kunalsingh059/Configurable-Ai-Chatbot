@@ -57,6 +57,37 @@ SYSTEM_PROMPT = (
 )
 
 
+def build_capabilities_note(tenant_tools: list[dict], documents_context: str) -> str:
+    """Grounds the model in what THIS business actually has configured, so
+    it can't fall back on generic training-data knowledge of "what customer
+    support chatbots usually do" (order tracking, returns, account
+    management, etc.) when asked something like "how can you help me" and
+    nothing real is set up yet. Without this, an empty tool list and empty
+    document context give the model nothing to anchor on except its own
+    priors - and it will confidently invent capabilities that don't exist
+    for this tenant, which is indistinguishable from a real feature to the
+    end user until they actually try it and it fails."""
+    if tenant_tools:
+        tool_names = ", ".join(t["name"].replace("_", " ") for t in tenant_tools)
+        note = f"\n\nYou have these live lookup tools available: {tool_names}."
+    else:
+        note = "\n\nNo live lookup tools are configured for this business yet."
+
+    if not documents_context:
+        note += " No reference documents (FAQs, policies, menus, etc.) have been uploaded either."
+
+    note += (
+        " When asked what you can help with, ONLY describe capabilities backed by "
+        "the tools and documents actually available to you, listed above/below. "
+        "Never invent or imply generic abilities - like order tracking, returns, "
+        "account management, or a general FAQ - unless they are truly configured "
+        "here. If nothing is configured yet, say so plainly (e.g. \"I don't have "
+        "any specific information set up yet\") and ask what the person is "
+        "looking for, instead of guessing or listing typical support-bot features."
+    )
+    return note
+
+
 def _to_openai_tool_schema(tool: dict) -> dict:
     """DB tool doc -> OpenAI/Groq function-calling format."""
     return {
@@ -86,7 +117,8 @@ async def run_groq_chat_turn(tenant_id: str, conversation: list[dict]) -> tuple[
     # Append this tenant's uploaded documents (menu, FAQ, policy, etc) to the
     # system prompt, if any exist. Tenants with none configured see this add
     # an empty string, so behavior is unchanged for them.
-    system_prompt = SYSTEM_PROMPT + await build_documents_context(tenant_id)
+    documents_context = await build_documents_context(tenant_id)
+    system_prompt = SYSTEM_PROMPT + build_capabilities_note(tenant_tools, documents_context) + documents_context
 
     # Build a plain OpenAI-style message list from our stored conversation.
     # Our conversation so far only contains plain user text turns (see

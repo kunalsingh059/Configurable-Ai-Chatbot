@@ -11,6 +11,8 @@ from pymongo.errors import DuplicateKeyError
 
 import os
 import time
+import asyncio
+import asyncio
 import logging
 
 logging.basicConfig(
@@ -32,6 +34,8 @@ from app.groq_client import run_groq_chat_turn
 from app.documents import extract_text, get_tenant_documents
 from app.email_service import send_password_reset_email
 from app.rate_limit import check_rate_limit
+import groq
+import anthropic
 from app.auth import (
     hash_password, verify_password, generate_api_key, create_access_token,
     create_reset_token, verify_reset_token,
@@ -79,6 +83,15 @@ MAX_UPLOAD_SIZE_MB = int(os.environ.get("MAX_UPLOAD_SIZE_MB", "10"))
 # per minute at the ceiling.
 CHAT_SESSION_RATE_LIMIT_PER_MINUTE = int(os.environ.get("CHAT_SESSION_RATE_LIMIT_PER_MINUTE", "20"))
 CHAT_RATE_LIMIT_PER_MINUTE = int(os.environ.get("CHAT_RATE_LIMIT_PER_MINUTE", "300"))
+
+# Wall-clock ceiling on an ENTIRE chat turn - covers everything: the LLM
+# call(s), every tool-call hop (up to 5), and every tool's own HTTP request.
+# The per-call timeouts elsewhere (LLM_REQUEST_TIMEOUT_SECONDS, the 10s tool
+# timeout in dynamic_tools.py) bound each individual piece, but worst case
+# those can still stack up to several minutes; this is the actual backstop
+# that guarantees a customer never waits past this no matter what combination
+# of slow LLM calls + slow tool calls happens along the way.
+OVERALL_CHAT_TIMEOUT_SECONDS = int(os.environ.get("OVERALL_CHAT_TIMEOUT_SECONDS", "45"))
 FORGOT_PASSWORD_RATE_LIMIT_PER_MINUTE = int(os.environ.get("FORGOT_PASSWORD_RATE_LIMIT_PER_MINUTE", "5"))
 LOGIN_RATE_LIMIT_PER_MINUTE = int(os.environ.get("LOGIN_RATE_LIMIT_PER_MINUTE", "10"))
 
@@ -141,6 +154,9 @@ MAX_MESSAGE_LENGTH = int(os.environ.get("MAX_MESSAGE_LENGTH", "1000"))
 # future message in a long conversation (the full history is resent every turn).
 MAX_CONVERSATION_HISTORY = int(os.environ.get("MAX_CONVERSATION_HISTORY", "20"))
 SESSION_IDLE_TIMEOUT_MINUTES = int(os.environ.get("SESSION_IDLE_TIMEOUT_MINUTES", "60"))
+# Bounds the WHOLE multi-hop tool-calling loop for one chat message, not
+# just a single LLM call - see the /chat endpoint for why this matters.
+MAX_CHAT_TURN_SECONDS = int(os.environ.get("MAX_CHAT_TURN_SECONDS", "45"))
 
 _last_session_cleanup = 0.0
 
@@ -158,6 +174,21 @@ def _cleanup_idle_sessions() -> None:
     stale_keys = [k for k, (last_access, _) in SESSIONS.items() if last_access < cutoff]
     for k in stale_keys:
         del SESSIONS[k]
+        _SESSION_LOCKS.pop(k, None)  # no point keeping a lock for a session that no longer exists
+
+
+# Per-session lock, created on first use. Guards the read-modify-write of a
+# single session's conversation (read history -> call LLM -> write updated
+# history back) so two near-simultaneous /chat requests for the SAME
+# session_id can't both read the same starting history, run independently,
+# and have the second write silently clobber the first's result. Locks are
+# per-KEY, not global - different sessions never block each other, only two
+# requests for the exact same session do. defaultdict is safe here without
+# extra locking of its own: this line never awaits, and the event loop is
+# single-threaded, so two "concurrent" tasks can't actually interleave
+# inside it.
+from collections import defaultdict
+_SESSION_LOCKS: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 # ------------------------- Bootstrap the super admin -------------------------
@@ -190,6 +221,12 @@ async def ensure_indexes():
         await admin_users_collection.create_index(
             "api_key", unique=True, partialFilterExpression={"api_key": {"$type": "string"}}
         )
+        # Non-unique - just speeds up the two queries every single chat
+        # message makes (loading a tenant's tools and documents). Doesn't
+        # matter yet with a handful of test tools, but matters once real
+        # businesses accumulate real data.
+        await tools_collection.create_index("tenant_id")
+        await documents_collection.create_index("tenant_id")
     except Exception as e:
         # Don't crash startup over this - most likely cause is duplicate
         # data already in the DB from before these indexes existed, which
@@ -399,7 +436,11 @@ async def deactivate_business_owner(owner_id: str, _admin: dict = Depends(get_cu
 # and get_tenant_from_api_key rejects the call outright if that business
 # owner has been deactivated.
 class ChatRequest(BaseModel):
-    session_id: str
+    # session_id is widget-generated (Math.random() based) and flows
+    # straight into in-memory dict keys (SESSIONS, rate limiter, the
+    # session lock below) - bounding its length stops someone from sending
+    # an absurdly long string to bloat those keys/dicts.
+    session_id: str = Field(..., min_length=1, max_length=200)
     message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_LENGTH)
 
 
@@ -426,21 +467,58 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
     # conversation history into another tenant's chat.
     session_key = f"{tenant_id}:{req.session_id}"
 
-    _, conversation = SESSIONS.get(session_key, (0.0, []))
-    conversation.append({"role": "user", "content": req.message})
+    # Serializes concurrent requests for this exact session - see
+    # _SESSION_LOCKS' own docstring above for why this is needed at all.
+    async with _SESSION_LOCKS[session_key]:
+        _, conversation = SESSIONS.get(session_key, (0.0, []))
+        conversation.append({"role": "user", "content": req.message})
 
-    if LLM_PROVIDER == "mock":
-        reply_text, updated_conversation = await run_mock_chat_turn(tenant_id, conversation)
-    elif LLM_PROVIDER == "groq":
-        reply_text, updated_conversation = await run_groq_chat_turn(tenant_id, conversation)
-    else:
-        reply_text, updated_conversation = await run_chat_turn(tenant_id, conversation)
+        try:
+            # Bounds the ENTIRE multi-hop tool-calling loop, not just a
+            # single LLM call - without this, up to 5 hops x a 20s LLM
+            # timeout x multiple sequential tool calls per hop (10s each)
+            # could add up to several minutes before anything fails.
+            async def _run_chat_turn():
+                if LLM_PROVIDER == "mock":
+                    return await run_mock_chat_turn(tenant_id, conversation)
+                elif LLM_PROVIDER == "groq":
+                    return await run_groq_chat_turn(tenant_id, conversation)
+                else:
+                    return await run_chat_turn(tenant_id, conversation)
 
-    # Keep only the most recent messages - see MAX_CONVERSATION_HISTORY comment above.
-    updated_conversation = updated_conversation[-MAX_CONVERSATION_HISTORY:]
+            reply_text, updated_conversation = await asyncio.wait_for(
+                _run_chat_turn(), timeout=MAX_CHAT_TURN_SECONDS
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Chat turn exceeded {MAX_CHAT_TURN_SECONDS}s for tenant {tenant_id}")
+            raise HTTPException(
+                status_code=504,
+                detail="That took too long to answer. Please try again.",
+            )
+        except (groq.APITimeoutError, anthropic.APITimeoutError):
+            logger.error(f"LLM provider timed out for tenant {tenant_id}")
+            raise HTTPException(status_code=504, detail="The AI took too long to respond. Please try again.")
+        except (groq.APIConnectionError, anthropic.APIConnectionError):
+            logger.error(f"Could not reach LLM provider for tenant {tenant_id}")
+            raise HTTPException(status_code=503, detail="The AI service is temporarily unreachable. Please try again shortly.")
+        except (groq.APIStatusError, anthropic.APIStatusError) as e:
+            # Covers RateLimitError, InternalServerError, AuthenticationError,
+            # etc - all real subclasses of APIStatusError in both SDKs. Log
+            # the real status/detail for us; never echo provider internals
+            # (which could include request headers/auth info) to the client.
+            logger.error(f"LLM provider returned an error for tenant {tenant_id}: {e.status_code} {e}")
+            raise HTTPException(status_code=502, detail="The AI service returned an error. Please try again.")
+        except HTTPException:
+            raise  # let our own intentional HTTPExceptions (e.g. from execute_tool) pass through untouched
+        except Exception as e:
+            logger.error(f"Unexpected error during chat turn for tenant {tenant_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=502, detail="Something went wrong answering that. Please try again.")
 
-    SESSIONS[session_key] = (time.time(), updated_conversation)
-    return ChatResponse(reply=reply_text)
+        # Keep only the most recent messages - see MAX_CONVERSATION_HISTORY comment above.
+        updated_conversation = updated_conversation[-MAX_CONVERSATION_HISTORY:]
+
+        SESSIONS[session_key] = (time.time(), updated_conversation)
+        return ChatResponse(reply=reply_text)
 
 @app.get("/widget/config")
 async def widget_config(tenant_id: str = Depends(get_tenant_from_api_key)):
@@ -582,7 +660,11 @@ async def upload_document(
             status_code=413,
             detail=f"File too large - max {MAX_UPLOAD_SIZE_MB}MB",
         )
-    text = extract_text(file.filename, file_bytes)
+    # Runs PDF extraction (CPU-bound) in a worker thread instead of
+    # awaiting it directly - extract_text() is synchronous, and calling it
+    # inline would block the whole event loop (every other concurrent
+    # request this process is handling) for however long extraction takes.
+    text = await asyncio.to_thread(extract_text, file.filename, file_bytes)
     doc = DocumentModel(tenant_id=tenant_id, name=file.filename, content=text)
     result = await documents_collection.insert_one(doc.dict())
     created = await documents_collection.find_one({"_id": result.inserted_id})

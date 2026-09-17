@@ -17,29 +17,48 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
-
-if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
-    raise RuntimeError(
-        "GMAIL_ADDRESS / GMAIL_APP_PASSWORD are not set in .env - the "
-        "password reset feature requires Gmail to be configured. Generate "
-        "an App Password at https://myaccount.google.com/apppasswords "
-        "(requires 2-Step Verification enabled on that Gmail account first)."
-    )
-
-# Same navy/amber brand colors as admin-vue's tailwind.config.js, so the
-# email matches the actual product instead of looking like a generic
-# unbranded system notification.
-NAVY = "#0b1224"
-AMBER = "#e0a527"
-AMBER_DARK = "#c8901c"
-SLATE_TEXT = "#334155"
-SLATE_MUTED = "#64748b"
-BORDER = "#e2e8f0"
+# Deliberately NOT read/validated at module import time (that was the bug -
+# see below). Read fresh inside send_password_reset_email() instead, the
+# same lazy pattern already used correctly for GROQ_API_KEY/ANTHROPIC_API_KEY
+# in groq_client.py
+#
+# WHY THIS MATTERS: main.py does `from app.email_service import
+# send_password_reset_email` unconditionally at the top of the file, as
+# part of loading the whole application. If this module raised at IMPORT
+# time (as it used to) whenever Gmail credentials were missing, that
+# single missing credential for a non-critical feature (password reset
+# email) would prevent the ENTIRE app from starting - including live chat,
+# admin login, everything - not just password reset. A production deploy
+# that hasn't gotten around to setting up a Gmail App Password yet would
+# refuse to boot at all. Making this lazy means the app starts fine
+# regardless, and only an actual password-reset attempt fails - and even
+# that fails safely, since /auth/forgot-password in main.py already wraps
+# this call in a try/except and returns its normal generic success message
+# either way (so this also doesn't create a new email-enumeration signal).
 
 
 def send_password_reset_email(to_email: str, reset_link: str) -> None:
+    gmail_address = os.environ.get("GMAIL_ADDRESS")
+    gmail_app_password = os.environ.get("GMAIL_APP_PASSWORD")
+
+    if not gmail_address or not gmail_app_password:
+        raise RuntimeError(
+            "GMAIL_ADDRESS / GMAIL_APP_PASSWORD are not set in .env - the "
+            "password reset feature requires Gmail to be configured. Generate "
+            "an App Password at https://myaccount.google.com/apppasswords "
+            "(requires 2-Step Verification enabled on that Gmail account first)."
+        )
+
+    # Same navy/amber brand colors as admin-vue's tailwind.config.js, so the
+    # email matches the actual product instead of looking like a generic
+    # unbranded system notification.
+    NAVY = "#0b1224"
+    AMBER = "#e0a527"
+    AMBER_DARK = "#c8901c"
+    SLATE_TEXT = "#334155"
+    SLATE_MUTED = "#64748b"
+    BORDER = "#e2e8f0"
+
     text_body = (
         f"We received a request to reset your Chatbot Platform password.\n\n"
         f"Click the link below to choose a new password. This link expires "
@@ -129,7 +148,7 @@ def send_password_reset_email(to_email: str, reset_link: str) -> None:
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = "Reset your Chatbot Platform password"
-    msg["From"] = GMAIL_ADDRESS
+    msg["From"] = gmail_address
     msg["To"] = to_email
     # Plain text part attached FIRST, HTML second - per the MIME spec for
     # multipart/alternative, clients render the LAST part they understand,
@@ -140,5 +159,5 @@ def send_password_reset_email(to_email: str, reset_link: str) -> None:
 
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
-        server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+        server.login(gmail_address, gmail_app_password)
         server.send_message(msg)

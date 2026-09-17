@@ -1,13 +1,14 @@
 """
 MOCK MODE - lets you test the entire pipeline (DB, tool executor, widget,
-session handling) with ZERO API calls and ZERO cost. It fakes what Claude
-would do using dumb keyword matching against each tool's params_schema.
+session handling) with ZERO API calls and ZERO cost. It fakes what the real
+model would do using dumb keyword matching against each tool's params_schema.
 
 This is NOT a replacement for real testing - it can't actually "understand"
-ambiguous requests the way Claude does. But it proves your plumbing works
-(DB -> tool schema -> HTTP call -> response -> reply) without spending a
-single credit. Flip USE_MOCK_LLM=false in .env once you have API credits
-and want to see the real reasoning.
+ambiguous requests the way a real model does. But it proves your plumbing
+works (DB -> tool schema -> HTTP call -> response -> reply) without
+spending a single credit. Set LLM_PROVIDER=groq (with GROQ_API_KEY) in .env
+once you want to see the real reasoning - LLM_PROVIDER=mock, not a separate
+USE_MOCK_LLM flag, is what actually controls this.
 """
 
 import re

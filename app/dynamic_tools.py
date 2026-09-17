@@ -1,5 +1,5 @@
 """
-GENERIC TOOL ENGINE - same job as before (build Claude's tool schema from a
+GENERIC TOOL ENGINE - same job as before (build the LLM's tool schema from a
 stored tool, execute the real HTTP call), now reading from Mongo instead of
 SQLAlchemy.
 
@@ -90,12 +90,36 @@ def _validate_tool_params(params_schema: dict, params: dict) -> str | None:
 MAX_LLM_RESULT_CHARS = 4000
 
 
+
+# RFC 6052 "Well-Known Prefix" used by NAT64 to synthesize an IPv6 address
+# for an ordinary public IPv4 destination, on networks that are IPv6-only
+# (some ISPs/mobile carriers/corporate networks). Python's ipaddress module
+# marks this whole /96 block as "reserved" - that's about its registry
+# purpose, not about the real destination being internal. We unwrap it and
+# validate the embedded IPv4 address instead of trusting that flag blindly.
+NAT64_WELL_KNOWN_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _is_blocked_ip(ip) -> bool:
+    """True if ip should be blocked as private/internal/unsafe."""
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
 def _assert_url_is_safe(url: str) -> None:
     """Raises ValueError if `url` is not safe to fetch server-side. Blocks:
     non-http(s) schemes, missing hostname, and any hostname that resolves
     to a private/loopback/link-local/reserved IP (covers localhost,
     127.0.0.1, internal networks like 10.x/192.168.x, and cloud metadata
-    endpoints like 169.254.169.254, which falls under link-local)."""
+    endpoints like 169.254.169.254, which falls under link-local). NAT64-
+    synthesized addresses are unwrapped first so genuine public IPv4
+    destinations aren't blocked just because of how they were resolved."""
     parsed = urlparse(url)
 
     if parsed.scheme not in ALLOWED_SCHEMES:
@@ -113,26 +137,22 @@ def _assert_url_is_safe(url: str) -> None:
     for family, _, _, _, sockaddr in resolved:
         ip_str = sockaddr[0]
         ip = ipaddress.ip_address(ip_str)
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
+
+        if isinstance(ip, ipaddress.IPv6Address) and ip in NAT64_WELL_KNOWN_PREFIX:
+            embedded_ipv4 = ipaddress.IPv4Address(ip.packed[12:16])
+            if _is_blocked_ip(embedded_ipv4):
+                raise ValueError(
+                    f"Hostname '{hostname}' resolves to a blocked address "
+                    f"({ip_str} -> embedded {embedded_ipv4}) - internal/private/"
+                    "link-local/metadata addresses are not allowed"
+                )
+            continue
+
+        if _is_blocked_ip(ip):
             raise ValueError(
                 f"Hostname '{hostname}' resolves to a blocked address ({ip_str}) - "
                 "internal/private/link-local/metadata addresses are not allowed"
             )
-
-
-def build_claude_schema(tool: dict) -> dict:
-    return {
-        "name": tool["name"],
-        "description": tool["description"],
-        "input_schema": tool["params_schema"],
-    }
 
 
 async def get_tenant_tools(tenant_id: str) -> list[dict]:
@@ -147,8 +167,8 @@ async def get_tenant_tools(tenant_id: str) -> list[dict]:
 async def get_tenant_tools_for_execution(tenant_id: str) -> list[dict]:
     """RUNTIME-FACING: headers are decrypted to real values server-side,
     for actually making the HTTP call in execute_tool(). Used by
-    claude_client.py/groq_client.py/mock_llm.py only - NEVER return this
-    data to the browser (decrypted secrets included)."""
+    groq_client.py/mock_llm.py only - NEVER return this data to the
+    browser (decrypted secrets included)."""
     cursor = tools_collection.find({"tenant_id": tenant_id})
     tools = []
     async for doc in cursor:

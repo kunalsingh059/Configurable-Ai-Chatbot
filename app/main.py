@@ -12,7 +12,6 @@ from pymongo.errors import DuplicateKeyError
 import os
 import time
 import asyncio
-import asyncio
 import logging
 
 logging.basicConfig(
@@ -24,45 +23,59 @@ logging.basicConfig(
     # logger.info()/logger.error() call in this app up to now.
 )
 logger = logging.getLogger("chatbot_platform")
-from app.db import tools_collection, documents_collection, admin_users_collection
+from app.db import client, tools_collection, documents_collection, admin_users_collection
 from app.models import ToolModel, ToolTestModel, DocumentModel, RegisterModel, LoginModel, BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, derive_business_name, serialize_tool, serialize_document
 from app.dynamic_tools import get_tenant_tools, execute_tool, format_tool_result_for_llm
 from app.crypto import encrypt_headers
-from app.claude_client import run_chat_turn
 from app.mock_llm import run_mock_chat_turn
 from app.groq_client import run_groq_chat_turn
 from app.documents import extract_text, get_tenant_documents
 from app.email_service import send_password_reset_email
 from app.rate_limit import check_rate_limit
 import groq
-import anthropic
 from app.auth import (
     hash_password, verify_password, generate_api_key, create_access_token,
     create_reset_token, verify_reset_token,
     get_current_business_owner, get_current_super_admin, get_tenant_from_api_key,
 )
 
-# Which LLM powers the chat: "mock" (free, fake reasoning, tests plumbing
-# only), "groq" (free tier, real reasoning), or "anthropic" (paid, the
-# eventual production choice). Set LLM_PROVIDER in .env.
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "mock").lower()
+# Which LLM powers the chat: "mock" (free, fake reasoning - dev/test ONLY)
+# or "groq" (real reasoning, the only real provider this app supports).
+# LLM_PROVIDER has NO default on purpose - a missing/invalid value must fail
+# startup loudly rather than silently falling back to anything, mock
+# included. That silent-mock fallback used to be the default behavior here,
+# which is exactly the "app boots fine, customers get fake canned answers,
+# nobody notices" failure mode this now prevents.
+_RAW_LLM_PROVIDER = os.environ.get("LLM_PROVIDER")
+LLM_PROVIDER = (_RAW_LLM_PROVIDER or "").lower()
 
-if LLM_PROVIDER == "mock":
-    # Not a hard failure - mock mode is legitimate for local dev/testing -
-    # but it's easy to forget to set LLM_PROVIDER in a real deploy and never
-    # notice the chatbot is answering with fake canned logic. Make it loud.
-    logger.warning(
-        "LLM_PROVIDER is not set (or set to 'mock') - the chatbot "
-        "is running on FAKE mock responses, not a real model. Set "
-        "LLM_PROVIDER=groq (and GROQ_API_KEY) in .env for real answers."
-    )
-elif LLM_PROVIDER == "groq" and not os.environ.get("GROQ_API_KEY"):
-    # Fail at startup, not on the first person's chat message - same
-    # principle as the SUPERADMIN_USERNAME/PASSWORD check below, just for
-    # a config error that would otherwise only surface as a 500 in prod.
+if not _RAW_LLM_PROVIDER:
     raise RuntimeError(
-        "LLM_PROVIDER=groq but GROQ_API_KEY is not set in .env - the app "
-        "cannot start without it."
+        "LLM_PROVIDER is not set in .env - refusing to start. Set "
+        "LLM_PROVIDER=groq (and GROQ_API_KEY) for real answers, or "
+        "explicitly LLM_PROVIDER=mock for local dev/testing only."
+    )
+elif LLM_PROVIDER == "mock":
+    # Legitimate for local dev/testing, but only because it was explicitly
+    # opted into above (no default can land here) - still loud about it so
+    # it's never mistaken for a real deploy.
+    logger.warning(
+        "LLM_PROVIDER=mock - the chatbot is running on FAKE canned "
+        "responses, not a real model. This must never be set in production."
+    )
+elif LLM_PROVIDER == "groq":
+    if not os.environ.get("GROQ_API_KEY"):
+        # Fail at startup, not on the first person's chat message - same
+        # principle as the SUPERADMIN_USERNAME/PASSWORD check below, just
+        # for a config error that would otherwise only surface as a 500.
+        raise RuntimeError(
+            "LLM_PROVIDER=groq but GROQ_API_KEY is not set in .env - the "
+            "app cannot start without it."
+        )
+else:
+    raise RuntimeError(
+        f"LLM_PROVIDER={_RAW_LLM_PROVIDER!r} is not a supported value - "
+        "use 'groq' (production) or 'mock' (dev/test only)."
     )
 
 # Where admin-vue's reset-password page lives - the emailed link points
@@ -84,15 +97,8 @@ MAX_UPLOAD_SIZE_MB = int(os.environ.get("MAX_UPLOAD_SIZE_MB", "10"))
 CHAT_SESSION_RATE_LIMIT_PER_MINUTE = int(os.environ.get("CHAT_SESSION_RATE_LIMIT_PER_MINUTE", "20"))
 CHAT_RATE_LIMIT_PER_MINUTE = int(os.environ.get("CHAT_RATE_LIMIT_PER_MINUTE", "300"))
 
-# Wall-clock ceiling on an ENTIRE chat turn - covers everything: the LLM
-# call(s), every tool-call hop (up to 5), and every tool's own HTTP request.
-# The per-call timeouts elsewhere (LLM_REQUEST_TIMEOUT_SECONDS, the 10s tool
-# timeout in dynamic_tools.py) bound each individual piece, but worst case
-# those can still stack up to several minutes; this is the actual backstop
-# that guarantees a customer never waits past this no matter what combination
-# of slow LLM calls + slow tool calls happens along the way.
-OVERALL_CHAT_TIMEOUT_SECONDS = int(os.environ.get("OVERALL_CHAT_TIMEOUT_SECONDS", "45"))
 FORGOT_PASSWORD_RATE_LIMIT_PER_MINUTE = int(os.environ.get("FORGOT_PASSWORD_RATE_LIMIT_PER_MINUTE", "5"))
+REGISTER_RATE_LIMIT_PER_MINUTE = int(os.environ.get("REGISTER_RATE_LIMIT_PER_MINUTE", "5"))
 LOGIN_RATE_LIMIT_PER_MINUTE = int(os.environ.get("LOGIN_RATE_LIMIT_PER_MINUTE", "10"))
 
 
@@ -236,7 +242,23 @@ async def ensure_indexes():
 
 @app.on_event("startup")
 async def bootstrap_super_admin():
-    existing = await admin_users_collection.find_one({"role": "super_admin"})
+    # A startup event handler that raises makes the ENTIRE app fail to
+    # boot (FastAPI/Starlette's lifespan protocol treats it as a hard
+    # startup failure) - so a transient Mongo connectivity issue at the
+    # exact moment of process start (e.g. the "No primary available for
+    # writes" case you hit) would prevent the app from starting at all,
+    # instead of starting and correctly reporting unhealthy via /health.
+    # Same reasoning as the index-creation handler above this one.
+    try:
+        existing = await admin_users_collection.find_one({"role": "super_admin"})
+    except Exception as e:
+        logger.error(
+            f"Could not check/bootstrap super admin - MongoDB unreachable "
+            f"at startup: {e}. The app will still start; /health will "
+            "correctly report unhealthy until MongoDB is reachable."
+        )
+        return
+
     if existing is not None:
         return
 
@@ -250,21 +272,31 @@ async def bootstrap_super_admin():
         )
         return
 
-    await admin_users_collection.insert_one({
-        "role": "super_admin",
-        "username": username,
-        "password_hash": hash_password(password),
-        "tenant_id": None,
-        "api_key": None,
-        "is_active": True,
-    })
-    logger.info(f"Super admin account created: {username}")
+    try:
+        await admin_users_collection.insert_one({
+            "role": "super_admin",
+            "username": username,
+            "password_hash": hash_password(password),
+            "tenant_id": None,
+            "api_key": None,
+            "is_active": True,
+        })
+        logger.info(f"Super admin account created: {username}")
+    except Exception as e:
+        logger.error(f"Could not create super admin account: {e}")
 
 
 # ------------------------------ Auth endpoints ------------------------------
 
 @app.post("/auth/register")
-async def register_business_owner(payload: RegisterModel):
+async def register_business_owner(payload: RegisterModel, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    # Same pattern as /auth/forgot-password and /auth/login - without this,
+    # registration is both a free username/tenant/email enumeration oracle
+    # (distinct error messages below reveal which one is taken) and an
+    # unlimited signup-spam vector.
+    check_rate_limit(f"register:{client_ip}", REGISTER_RATE_LIMIT_PER_MINUTE)
+
     existing = await admin_users_collection.find_one({"username": payload.username})
     if existing is not None:
         raise HTTPException(status_code=400, detail="Username already taken")
@@ -479,12 +511,13 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
             # timeout x multiple sequential tool calls per hop (10s each)
             # could add up to several minutes before anything fails.
             async def _run_chat_turn():
+                # LLM_PROVIDER is validated to be exactly "mock" or "groq"
+                # at startup (see the fail-closed check above) - nothing
+                # else can reach this point, so no silent third fallback.
                 if LLM_PROVIDER == "mock":
                     return await run_mock_chat_turn(tenant_id, conversation)
-                elif LLM_PROVIDER == "groq":
-                    return await run_groq_chat_turn(tenant_id, conversation)
                 else:
-                    return await run_chat_turn(tenant_id, conversation)
+                    return await run_groq_chat_turn(tenant_id, conversation)
 
             reply_text, updated_conversation = await asyncio.wait_for(
                 _run_chat_turn(), timeout=MAX_CHAT_TURN_SECONDS
@@ -495,17 +528,17 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
                 status_code=504,
                 detail="That took too long to answer. Please try again.",
             )
-        except (groq.APITimeoutError, anthropic.APITimeoutError):
+        except groq.APITimeoutError:
             logger.error(f"LLM provider timed out for tenant {tenant_id}")
             raise HTTPException(status_code=504, detail="The AI took too long to respond. Please try again.")
-        except (groq.APIConnectionError, anthropic.APIConnectionError):
+        except groq.APIConnectionError:
             logger.error(f"Could not reach LLM provider for tenant {tenant_id}")
             raise HTTPException(status_code=503, detail="The AI service is temporarily unreachable. Please try again shortly.")
-        except (groq.APIStatusError, anthropic.APIStatusError) as e:
+        except groq.APIStatusError as e:
             # Covers RateLimitError, InternalServerError, AuthenticationError,
-            # etc - all real subclasses of APIStatusError in both SDKs. Log
-            # the real status/detail for us; never echo provider internals
-            # (which could include request headers/auth info) to the client.
+            # etc - all real subclasses of APIStatusError. Log the real
+            # status/detail for us; never echo provider internals (which
+            # could include request headers/auth info) to the client.
             logger.error(f"LLM provider returned an error for tenant {tenant_id}: {e.status_code} {e}")
             raise HTTPException(status_code=502, detail="The AI service returned an error. Please try again.")
         except HTTPException:
@@ -681,4 +714,15 @@ async def delete_document(doc_id: str, tenant_id: str = Depends(get_current_busi
 
 @app.get("/health")
 async def health():
+    """Real readiness check, not just "the process is running". If Mongo
+    is unreachable, this app genuinely cannot serve /chat, /admin/*, or
+    auth - reporting "ok" anyway would tell a load balancer/orchestrator
+    to keep sending it traffic it can't actually handle."""
+    try:
+        # Bounded ping so a Mongo problem can't make /health itself hang -
+        # same reasoning as the client-level timeouts in db.py.
+        await asyncio.wait_for(client.admin.command("ping"), timeout=3)
+    except Exception as e:
+        logger.error(f"Health check failed - MongoDB unreachable: {e}")
+        raise HTTPException(status_code=503, detail="Database unavailable")
     return {"status": "ok"}

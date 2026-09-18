@@ -703,7 +703,10 @@ async def upload_document(
     # awaiting it directly - extract_text() is synchronous, and calling it
     # inline would block the whole event loop (every other concurrent
     # request this process is handling) for however long extraction takes.
-    text = await asyncio.to_thread(extract_text, file.filename, file_bytes)
+    try:
+        text = await asyncio.to_thread(extract_text, file.filename, file_bytes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     doc = DocumentModel(tenant_id=tenant_id, name=file.filename, content=text)
     result = await documents_collection.insert_one(doc.dict())
     created = await documents_collection.find_one({"_id": result.inserted_id})

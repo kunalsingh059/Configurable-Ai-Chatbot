@@ -23,6 +23,8 @@ from groq import AsyncGroq
 from app.dynamic_tools import get_tenant_tools_for_execution, execute_tool, format_tool_result_for_llm
 from app.documents import build_documents_context
 
+MAX_TOOL_HOPS = int(os.environ.get("MAX_TOOL_HOPS", "5"))
+
 # Fast + good tool-calling quality on Groq's free tier.
 GROQ_MODEL = "openai/gpt-oss-120b"
 
@@ -132,7 +134,7 @@ async def run_groq_chat_turn(tenant_id: str, conversation: list[dict]) -> tuple[
             # Already-converted tool messages from a previous hop in this loop
             messages.extend(msg["content"])
 
-    for _ in range(5):  # safety limit on tool-call hops
+    for _ in range(MAX_TOOL_HOPS):  # safety limit on tool-call hops
         response = await client.chat.completions.create(
             model=GROQ_MODEL,
             messages=messages,

@@ -17,12 +17,13 @@ MAX_TOTAL_CHARS = 8000
 MAX_PDF_PAGES = 50
 
 
+# documents.py, top of extract_text()
+ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md"}
 def extract_text(filename: str, file_bytes: bytes) -> str:
-    """CPU-bound (especially PdfReader/extract_text) - callers on the async
-    request path should run this via asyncio.to_thread(), not await it
-    directly, or a single large upload blocks the whole event loop (every
-    other concurrent request on this process) for however long extraction
-    takes. See the /admin/documents upload endpoint in main.py."""
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValueError(f"Unsupported file type: {ext or 'unknown'}")
+        
     if filename.lower().endswith(".pdf"):
         reader = PdfReader(BytesIO(file_bytes))
         chunks = []

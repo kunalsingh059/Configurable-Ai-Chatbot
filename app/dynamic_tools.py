@@ -255,7 +255,7 @@ async def execute_tool(tool: dict, params: dict) -> dict:
         # follow_redirects=False on purpose: a validated-safe URL could
         # redirect to an internal address, and re-validating a redirect
         # chain is extra complexity we don't need - just refuse to follow.
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5, read=10, write=10, pool=5), follow_redirects=False) as client:
             async with client.stream(method, url, **request_kwargs) as resp:
                 if resp.is_redirect:
                     return {"error": "Blocked: tool endpoint attempted a redirect"}

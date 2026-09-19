@@ -245,6 +245,27 @@ async def ensure_indexes():
         # needs manual cleanup, not a blocked boot.
         logger.error(f"Failed to create MongoDB unique indexes (duplicate data may already exist): {e}")
 
+    # One-time (but safe to run every startup - it's a no-op once nothing
+    # matches) migration for accounts created before reset_token_version
+    # existed. Without this, an existing account's password-reset flow
+    # fails on its very first attempt: Mongo's query matching requires the
+    # field to actually exist and equal the queried value, unlike Python's
+    # .get(key, 0) default - a document with reset_token_version entirely
+    # absent never matches {"reset_token_version": 0}, so the atomic
+    # update_one in reset_password always reports 0 rows changed.
+    try:
+        result = await admin_users_collection.update_many(
+            {"reset_token_version": {"$exists": False}},
+            {"$set": {"reset_token_version": 0}},
+        )
+        if result.modified_count:
+            logger.info(
+                f"Migrated {result.modified_count} account(s) missing "
+                "reset_token_version (backfilled to 0)."
+            )
+    except Exception as e:
+        logger.error(f"reset_token_version migration failed: {e}")
+
 
 @app.on_event("startup")
 async def bootstrap_super_admin():
@@ -286,6 +307,7 @@ async def bootstrap_super_admin():
             "tenant_id": None,
             "api_key": None,
             "is_active": True,
+            "reset_token_version": 0,
         })
         logger.info(f"Super admin account created: {username}")
     except Exception as e:
@@ -325,6 +347,7 @@ async def register_business_owner(payload: RegisterModel, request: Request):
             "password_hash": hash_password(payload.password),
             "api_key": generate_api_key(),
             "is_active": False,
+            "reset_token_version": 0,
         })
     except DuplicateKeyError:
         # The find_one checks above catch almost every case, but there's a

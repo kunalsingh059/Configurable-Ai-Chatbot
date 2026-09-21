@@ -21,7 +21,7 @@ language answer. This is the core mechanic the entire product is built on.
 
 3. Run the server:
    ```
-   uvicorn app.main:app --reload --port 8000
+   uvicorn app.main:app --reload --port 8001
    ```
 
 4. Open `widget/widget.html` directly in your browser (just double-click it,

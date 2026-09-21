@@ -3,6 +3,7 @@ import { ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { api, ApiError } from "../services/api";
 import { useToast } from "../composables/useToast";
+import PasswordInput from "../components/PasswordInput.vue";
 
 const route = useRoute();
 const toast = useToast();
@@ -81,22 +82,11 @@ async function submit() {
       <form v-else class="space-y-4 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100 sm:p-6" @submit.prevent="submit">
         <div>
           <label class="mb-1 block text-xs font-medium text-slate-600">New password</label>
-          <input
-            v-model="newPassword"
-            type="password"
-            required
-            autofocus
-            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
-          />
+          <PasswordInput v-model="newPassword" required autofocus autocomplete="new-password" />
         </div>
         <div>
           <label class="mb-1 block text-xs font-medium text-slate-600">Confirm new password</label>
-          <input
-            v-model="confirmPassword"
-            type="password"
-            required
-            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
-          />
+          <PasswordInput v-model="confirmPassword" required autocomplete="new-password" />
         </div>
 
         <p v-if="error" class="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">

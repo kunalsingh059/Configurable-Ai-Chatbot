@@ -3,6 +3,7 @@ import { ref, watch } from "vue";
 import { useAuthStore } from "../stores/auth";
 import { ApiError } from "../services/api";
 import { useToast } from "../composables/useToast";
+import PasswordInput from "../components/PasswordInput.vue";
 
 const auth = useAuthStore();
 const toast = useToast();
@@ -134,12 +135,7 @@ async function submit() {
         </div>
         <div>
           <label class="mb-1 block text-xs font-medium text-slate-600">Password</label>
-          <input
-            v-model="password"
-            type="password"
-            required
-            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
-          />
+          <PasswordInput v-model="password" required autocomplete="new-password" />
         </div>
 
         <p v-if="error" class="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">

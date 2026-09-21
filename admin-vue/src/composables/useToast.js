@@ -11,6 +11,14 @@ const toasts = reactive([]);
  */
 export function useToast() {
   function push(message, type = "info", duration = 3500) {
+    // If the exact same message is already showing, don't stack another
+    // copy on top of it - this is what was causing "Saved" to pile up
+    // 100 times from repeated clicking. A genuinely new action (or the
+    // same message again after the earlier one has actually dismissed)
+    // still shows normally - this only collapses back-to-back duplicates.
+    const existing = toasts.find((t) => t.message === message && t.type === type);
+    if (existing) return;
+
     const id = nextId++;
     toasts.push({ id, message, type });
     setTimeout(() => dismiss(id), duration);

@@ -59,6 +59,12 @@ export const api = {
   updateBusinessName: (token, businessName) =>
     request("/admin/business-name", { method: "PATCH", body: { business_name: businessName }, token }),
 
+  // Business owner - embed security (allowed websites + API key)
+  getEmbedSettings: (token) => request("/admin/embed-settings", { token }),
+  updateAllowedDomains: (token, domains) =>
+    request("/admin/allowed-domains", { method: "PUT", body: { domains }, token }),
+  regenerateApiKey: (token) => request("/admin/api-key/regenerate", { method: "POST", token }),
+
   // Business owner - documents
   listDocuments: (token) => request("/admin/documents", { token }),
   uploadDocument: (token, file) => {

@@ -9,9 +9,13 @@ Fine for a single-instance MVP launch; move to Redis (INCR + EXPIRE) if you
 scale beyond one process, same as the SESSIONS TODO.
 """
 
+import logging
+import os
 import time
 from collections import defaultdict
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+
+logger = logging.getLogger("chatbot_platform")
 
 _hits: dict[str, list[float]] = defaultdict(list)
 
@@ -66,3 +70,38 @@ def check_rate_limit(key: str, max_requests: int, window_seconds: int = 60) -> N
             detail="Too many requests - please slow down and try again shortly.",
         )
     hits.append(now)
+
+
+# ---------------------------------------------------------------------------
+# Real client IP behind a reverse proxy
+# ---------------------------------------------------------------------------
+# On Render (and any host with a load balancer in front of the app),
+# request.client.host is the PROXY's address, not the visitor's - so every
+# per-IP limit would be shared by all visitors at once. The proxy puts the
+# visitor's address in X-Forwarded-For instead.
+#
+# X-Forwarded-For can also be written by the visitor themselves, so it is only
+# trusted by position: each proxy in front of the app APPENDS the address it
+# saw, so with N trusted proxies the real client is the N-th entry counted
+# from the RIGHT. Anything further left is client-supplied and ignored.
+#
+# TRUSTED_PROXY_HOPS = how many proxies sit in front of the app.
+#   0 (default) = ignore X-Forwarded-For, use the direct connection address
+#                 (correct for local dev / no proxy - identical to old behavior).
+# Too LOW a value makes many visitors share one IP (over-limits real users);
+# too HIGH a value lets a visitor spoof their IP. Verify it after deploying:
+# set LOG_LEVEL=DEBUG, call the API from two different networks (e.g. Wi-Fi and
+# mobile data) and confirm the logged client_ip values differ.
+TRUSTED_PROXY_HOPS = int(os.environ.get("TRUSTED_PROXY_HOPS", "0"))
+
+
+def get_client_ip(request: Request) -> str:
+    direct = request.client.host if request.client else "unknown"
+    if TRUSTED_PROXY_HOPS <= 0:
+        return direct
+
+    forwarded = request.headers.get("x-forwarded-for", "")
+    parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+    ip = parts[-TRUSTED_PROXY_HOPS] if len(parts) >= TRUSTED_PROXY_HOPS else direct
+    logger.debug(f"client_ip={ip} direct={direct} x_forwarded_for={forwarded!r}")
+    return ip

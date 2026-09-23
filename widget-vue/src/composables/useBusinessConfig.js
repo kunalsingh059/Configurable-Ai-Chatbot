@@ -4,7 +4,7 @@ import { useApiKey } from "./useApiKey";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 export function useBusinessConfig() {
-  const { apiKey } = useApiKey();
+  const { apiKey, parentOrigin } = useApiKey();
   const businessName = ref("Support Assistant");
 
   watch(
@@ -13,7 +13,10 @@ export function useBusinessConfig() {
       if (!key) return;
       try {
         const res = await fetch(`${API_BASE}/widget/config`, {
-          headers: { "X-API-Key": key },
+          headers: {
+            "X-API-Key": key,
+            ...(parentOrigin.value ? { "X-Embed-Origin": parentOrigin.value } : {}),
+          },
         });
         if (res.ok) {
           const data = await res.json();

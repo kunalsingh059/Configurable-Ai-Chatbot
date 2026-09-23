@@ -5,6 +5,7 @@ not as an ORM layer. Mongo documents are just Python dicts under the hood.
 """
 
 import re
+from urllib.parse import urlparse
 from pydantic import BaseModel, Field, EmailStr, field_validator
 from typing import Optional
 from datetime import datetime
@@ -113,6 +114,67 @@ class LoginModel(BaseModel):
 
 class BusinessNameModel(BaseModel):
     business_name: str = Field(..., min_length=1, max_length=100)
+
+
+# Domains many unrelated people can publish sites under. Allowing e.g.
+# "vercel.app" would authorize EVERY site hosted on vercel.app (including an
+# attacker's), because a listed domain also matches its subdomains - so these
+# must be entered as a full address instead (mysite.vercel.app).
+_SHARED_SUFFIXES = {
+    "vercel.app", "netlify.app", "onrender.com", "github.io", "pages.dev",
+    "workers.dev", "herokuapp.com", "web.app", "firebaseapp.com",
+    "azurewebsites.net", "cloudfront.net", "amazonaws.com", "ngrok.io",
+    "ngrok-free.app", "trycloudflare.com", "surge.sh", "glitch.me", "repl.co",
+    "co.in", "net.in", "org.in", "ac.in", "gov.in", "co.uk", "org.uk",
+    "com.au", "co.jp", "com.br",
+}
+_HOSTNAME_RE = re.compile(
+    r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*"
+)
+
+
+def normalize_domain(raw: str) -> str:
+    """Turns whatever an owner typed - "https://www.MySite.com/menu",
+    "mysite.com:3000", "MYSITE.COM" - into a bare lowercase hostname
+    ("www.mysite.com"), or raises ValueError. Scheme, port and path are dropped
+    because the check compares hostnames only."""
+    value = (raw or "").strip().lower()
+    if not value:
+        raise ValueError("Domain cannot be blank")
+    if len(value) > 300:
+        raise ValueError("Domain is too long")
+    if "://" not in value:
+        value = "//" + value  # so urlparse treats it as a host, not a path
+    try:
+        host = urlparse(value).hostname
+    except ValueError:
+        host = None
+    if not host or len(host) > 253 or not _HOSTNAME_RE.fullmatch(host):
+        raise ValueError(f"'{raw.strip()}' is not a valid domain")
+    if host != "localhost" and "." not in host:
+        # A bare "com" would match every .com website.
+        raise ValueError(f"'{raw.strip()}' is not a valid domain - use your full site address, e.g. mysite.com")
+    if host in _SHARED_SUFFIXES:
+        raise ValueError(
+            f"'{host}' is shared by many different websites - enter your own full address instead (e.g. mysite.{host})"
+        )
+    return host
+
+
+class AllowedDomainsModel(BaseModel):
+    """The websites allowed to show this business's chat widget. An empty list
+    means 'no restriction' (unless REQUIRE_ALLOWED_DOMAINS is on - see auth.py)."""
+    domains: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("domains")
+    @classmethod
+    def normalize_all(cls, v: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for item in v:
+            host = normalize_domain(item)
+            if host not in cleaned:
+                cleaned.append(host)
+        return cleaned
 
 
 class ForgotPasswordModel(BaseModel):

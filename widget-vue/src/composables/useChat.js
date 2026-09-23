@@ -21,7 +21,7 @@ function friendlyErrorFor(status) {
 }
 
 export function useChat(businessNameRef) {
-  const { apiKey, isResolved } = useApiKey();
+  const { apiKey, isResolved, parentOrigin } = useApiKey();
 
   let sessionId = generateSessionId();
 
@@ -57,6 +57,7 @@ export function useChat(businessNameRef) {
         headers: {
           "Content-Type": "application/json",
           "X-API-Key": apiKey.value,
+          ...(parentOrigin.value ? { "X-Embed-Origin": parentOrigin.value } : {}),
         },
         body: JSON.stringify({ session_id: sessionId, message: trimmed }),
         signal: controller.signal,

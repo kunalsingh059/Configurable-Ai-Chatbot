@@ -37,6 +37,14 @@ export const useAuthStore = defineStore("auth", {
       return data;
     },
 
+    // Called after the key is regenerated (or found stale on another device),
+    // so the embed snippet on the dashboard always shows the current key.
+    setApiKey(key) {
+      this.apiKey = key;
+      if (key) localStorage.setItem("admin_api_key", key);
+      else localStorage.removeItem("admin_api_key");
+    },
+
     setBusinessName(name) {
       this.businessName = name;
       localStorage.setItem("admin_business_name", name);

@@ -24,13 +24,15 @@ import os
 import secrets
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 from app.db import admin_users_collection
+from app.rate_limit import check_rate_limit, get_client_ip
 
 logger = logging.getLogger("chatbot_platform")
 
@@ -42,6 +44,19 @@ if not JWT_SECRET:
     )
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 24
+
+# Max requests per minute from ONE real client IP to the public (API-key)
+# endpoints - /chat and /widget/config share this bucket. Sits in front of the
+# per-session and per-business limits in main.py: those are keyed on values a
+# scripted client controls (session_id) or shared by all of a business's
+# customers, so on their own one abuser could exhaust a whole business's quota.
+PUBLIC_IP_RATE_LIMIT_PER_MINUTE = int(os.environ.get("PUBLIC_IP_RATE_LIMIT_PER_MINUTE", "60"))
+
+# false (default): a business that hasn't listed any allowed websites yet is
+#   unrestricted - existing accounts keep working after this update.
+# true: such a business is REFUSED until it lists at least one website. Turn
+#   this on in production once every business has configured its site.
+REQUIRE_ALLOWED_DOMAINS = os.environ.get("REQUIRE_ALLOWED_DOMAINS", "false").strip().lower() in ("1", "true", "yes")
 
 _ph = PasswordHasher()
 
@@ -182,22 +197,63 @@ async def get_current_super_admin(authorization: str = Header(None)) -> dict:
     return payload
 
 
+def _host_from_origin(value: str | None) -> str | None:
+    """Hostname of an origin like "https://www.shop.com:8443", or None if it
+    isn't a plain http(s) origin (e.g. the literal string "null" that
+    sandboxed frames send, or garbage)."""
+    if not value:
+        return None
+    try:
+        parsed = urlparse(value.strip())
+        host = parsed.hostname
+    except ValueError:
+        return None
+    if parsed.scheme not in ("http", "https") or not host:
+        return None
+    return host.lower()
+
+
+def _host_is_allowed(host: str, allowed_domains: list[str]) -> bool:
+    # "shop.com" allows shop.com and any subdomain (www.shop.com, ...), but
+    # NOT "evilshop.com" or "shop.com.evil.com" - hence the leading dot.
+    return any(host == d or host.endswith("." + d) for d in allowed_domains)
+
+
 async def get_tenant_from_api_key(
+    request: Request,
     x_api_key: str = Header(None),
-    origin: str = Header(None),
-    referer: str = Header(None),
+    x_embed_origin: str = Header(None),
 ) -> str:
     """
-    Dependency for /chat. Resolves which tenant an API key belongs to, and
-    rejects the request if that business owner has been deactivated - this
-    is what makes deactivation stop a live chatbot immediately, not just
-    block the admin panel.
+    Dependency for /chat and /widget/config. Resolves which tenant an API key
+    belongs to, and rejects the request if that business owner has been
+    deactivated - this is what makes deactivation stop a live chatbot
+    immediately, not just block the admin panel.
 
-    Also checks the request's Origin/Referer against that business's
-    allowed_domains (if configured) - this is what stops a leaked
-    api_key from being used on someone else's website, since the key
-    itself is always visible in client-side HTML by design.
+    WHY THE KEY ALONE CAN'T BE THE PROTECTION: the api_key sits in the client's
+    page HTML by design, so anyone can copy it. What stops a copied key from
+    working on someone else's site is this check of WHERE the widget is
+    embedded:
+
+      - The widget runs inside an iframe, so the browser's own Origin header on
+        its API calls is the WIDGET's domain, which says nothing about which
+        website embedded it.
+      - Instead the widget reads the embedding page's origin from the
+        browser-supplied event.origin of embed.js's postMessage (page scripts
+        can't forge that) and sends it as X-Embed-Origin.
+      - Another site that embeds our widget, or opens it directly with the key,
+        therefore reports ITS OWN origin and is refused here. A page on another
+        site calling this API directly is stopped by CORS in main.py.
+
+    LIMIT: a non-browser client (curl, a server script) can send any header
+    it likes, so this stops re-use of a copied key from other websites, not a
+    determined scripted attacker. Against that, the per-IP / per-session /
+    per-business rate limits and key regeneration are the defenses.
     """
+    # Throttle per real client IP FIRST - before any DB lookup - so garbage
+    # keys and floods can't be used to hammer the database either.
+    check_rate_limit(f"public-ip:{get_client_ip(request)}", PUBLIC_IP_RATE_LIMIT_PER_MINUTE)
+
     if not x_api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
 
@@ -209,12 +265,20 @@ async def get_tenant_from_api_key(
 
     allowed_domains = user.get("allowed_domains") or []
     if allowed_domains:
-        request_origin = origin or referer or ""
-        host = request_origin.split("//")[-1].split("/")[0].split(":")[0]
-        if not any(host == d or host.endswith("." + d) for d in allowed_domains):
+        host = _host_from_origin(x_embed_origin)
+        if host is None or not _host_is_allowed(host, allowed_domains):
+            logger.warning(
+                f"Blocked widget request for tenant '{user['tenant_id']}' from "
+                f"unauthorized site {str(x_embed_origin)[:100]!r}"
+            )
             raise HTTPException(
                 status_code=403,
                 detail="This chatbot is not authorized for this website.",
             )
+    elif REQUIRE_ALLOWED_DOMAINS:
+        raise HTTPException(
+            status_code=403,
+            detail="This chatbot has not been authorized for any website yet.",
+        )
 
     return user["tenant_id"]

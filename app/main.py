@@ -25,19 +25,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("chatbot_platform")
 from app.db import client, tools_collection, documents_collection, admin_users_collection
-from app.models import ToolModel, ToolTestModel, DocumentModel, RegisterModel, LoginModel, BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, derive_business_name, serialize_tool, serialize_document
+from app.models import ToolModel, ToolTestModel, DocumentModel, RegisterModel, LoginModel, BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, AllowedDomainsModel, derive_business_name, serialize_tool, serialize_document
 from app.dynamic_tools import get_tenant_tools, execute_tool, format_tool_result_for_llm
 from app.crypto import encrypt_headers
 from app.mock_llm import run_mock_chat_turn
 from app.groq_client import run_groq_chat_turn
 from app.documents import extract_text, get_tenant_documents
 from app.email_service import send_password_reset_email
-from app.rate_limit import check_rate_limit
+from app.rate_limit import check_rate_limit, get_client_ip
 import groq
 from app.auth import (
     hash_password, verify_password, generate_api_key, create_access_token,
     create_reset_token, verify_reset_token,
     get_current_business_owner, get_current_super_admin, get_tenant_from_api_key,
+    REQUIRE_ALLOWED_DOMAINS,
 )
 
 # Which LLM powers the chat: "mock" (free, fake reasoning - dev/test ONLY)
@@ -318,7 +319,7 @@ async def bootstrap_super_admin():
 
 @app.post("/auth/register")
 async def register_business_owner(payload: RegisterModel, request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     # Same pattern as /auth/forgot-password and /auth/login - without this,
     # registration is both a free username/tenant/email enumeration oracle
     # (distinct error messages below reveal which one is taken) and an
@@ -369,7 +370,7 @@ async def register_business_owner(payload: RegisterModel, request: Request):
 
 @app.post("/auth/login")
 async def login(payload: LoginModel, request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     # Two separate limits: by IP (stops one attacker hammering many
     # accounts) and by username (stops a distributed attack - many IPs -
     # targeting one specific account). Both must pass.
@@ -402,7 +403,7 @@ async def forgot_password(payload: ForgotPasswordModel, request: Request):
     anyone could use this endpoint to check which emails are registered
     on the platform.
     """
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     check_rate_limit(f"forgot-password:{client_ip}", FORGOT_PASSWORD_RATE_LIMIT_PER_MINUTE)
     user = await admin_users_collection.find_one({"email": payload.email})
     if user is not None:
@@ -621,6 +622,54 @@ async def update_business_name(payload: BusinessNameModel, tenant_id: str = Depe
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Business owner not found")
     return {"business_name": payload.business_name}
+
+# ----------------- Embed security: allowed websites + API key -----------------
+# The widget's API key is visible to anyone who views the client's page source -
+# unavoidable for an embeddable widget. What stops a copied key working on
+# someone else's site is get_tenant_from_api_key (auth.py), which checks the
+# embedding site against the allowed_domains saved here. tenant_id always comes
+# from the JWT, never from the request body.
+
+@app.get("/admin/embed-settings")
+async def get_embed_settings(tenant_id: str = Depends(get_current_business_owner)):
+    user = await admin_users_collection.find_one({"tenant_id": tenant_id, "role": "business_owner"})
+    if user is None:
+        raise HTTPException(status_code=404, detail="Business owner not found")
+    return {
+        "api_key": user.get("api_key"),
+        "allowed_domains": user.get("allowed_domains") or [],
+        "restriction_required": REQUIRE_ALLOWED_DOMAINS,
+    }
+
+
+@app.put("/admin/allowed-domains")
+async def update_allowed_domains(payload: AllowedDomainsModel, tenant_id: str = Depends(get_current_business_owner)):
+    result = await admin_users_collection.update_one(
+        {"tenant_id": tenant_id, "role": "business_owner"},
+        {"$set": {"allowed_domains": payload.domains}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Business owner not found")
+    logger.info(f"Allowed domains updated for tenant '{tenant_id}': {payload.domains}")
+    return {"allowed_domains": payload.domains}
+
+
+@app.post("/admin/api-key/regenerate")
+async def regenerate_api_key(tenant_id: str = Depends(get_current_business_owner)):
+    """Replaces the widget API key. The OLD key stops working immediately (every
+    request looks the key up in the DB), so a leaked/abused key can be killed
+    without waiting for anyone. The owner must paste the new embed snippet on
+    their site afterwards."""
+    new_key = generate_api_key()
+    result = await admin_users_collection.update_one(
+        {"tenant_id": tenant_id, "role": "business_owner"},
+        {"$set": {"api_key": new_key}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Business owner not found")
+    logger.info(f"API key regenerated for tenant '{tenant_id}'")  # never log the key itself
+    return {"api_key": new_key}
+
 
 # ------------------------- Admin CRUD for tools -------------------------
 # tenant_id comes from the logged-in business owner's JWT, never from a

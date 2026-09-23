@@ -21,6 +21,14 @@ const params = new URLSearchParams(window.location.search);
 const urlKey = params.get("api_key");
 
 const apiKey = ref(urlKey || null);
+
+// The origin of the page that embedded us (e.g. "https://tastybites.com").
+// Read from event.origin of the parent's "widget-init" message - that value is
+// set by the BROWSER and cannot be forged by scripts on the embedding page. It
+// is sent to the API on every request (X-Embed-Origin) so the backend can
+// refuse a copied API key that's being used on a website the business owner
+// didn't authorize. null in standalone/dev mode (no parent page).
+const parentOrigin = ref(null);
 const isResolved = ref(!!urlKey);
 
 let handshakeStarted = false;
@@ -41,6 +49,7 @@ function startHandshake() {
     if (event.source !== window.parent) return;
     if (!event.data || event.data.type !== "widget-init") return;
 
+    parentOrigin.value = event.origin || null;
     apiKey.value = event.data.apiKey || null;
     isResolved.value = true;
   });
@@ -54,5 +63,5 @@ function startHandshake() {
 startHandshake();
 
 export function useApiKey() {
-  return { apiKey, isResolved };
+  return { apiKey, isResolved, parentOrigin };
 }

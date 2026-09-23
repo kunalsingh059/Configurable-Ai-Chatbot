@@ -5,6 +5,7 @@ import { useAuthStore } from "../stores/auth";
 import ToolsManager from "../components/ToolsManager.vue";
 import DocumentsManager from "../components/DocumentsManager.vue";
 import WidgetEmbedCard from "../components/WidgetEmbedCard.vue";
+import EmbedSecurity from "../components/EmbedSecurity.vue";
 import BusinessSettings from "../components/BusinessSettings.vue";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 
@@ -34,6 +35,7 @@ function confirmLogout() {
     <div class="space-y-5">
       <BusinessSettings />
       <WidgetEmbedCard v-if="auth.apiKey" :api-key="auth.apiKey" />
+      <EmbedSecurity />
       <ToolsManager />
       <DocumentsManager />
     </div>

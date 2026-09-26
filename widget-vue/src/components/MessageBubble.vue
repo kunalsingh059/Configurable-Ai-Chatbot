@@ -32,7 +32,7 @@ const renderedHtml = computed(() => {
       {{ role === "user" ? "You" : initials }}
     </div>
     <div
-      class="max-w-[75%] rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed"
+      class="max-w-[75%] min-w-0 rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed break-words"
       :class="
         role === 'user'
           ? 'rounded-br-sm bg-navy-950 text-white'

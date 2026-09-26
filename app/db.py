@@ -29,3 +29,10 @@ db = client[DB_NAME]
 tools_collection = db["tools"]
 documents_collection = db["documents"]
 admin_users_collection = db["admin_users"]
+
+# One doc per CHUNK (not per uploaded file) - each has tenant_id, the
+# parent document's id/name, the chunk's text, and its embedding vector.
+# documents_collection stays the source of truth for the admin UI
+# (list/delete a whole uploaded file); this collection is the retrieval
+# index Atlas Vector Search actually queries against. See app/documents.py.
+document_chunks_collection = db["document_chunks"]

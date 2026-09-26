@@ -9,7 +9,7 @@ import { useChat } from "./composables/useChat";
 import { useBusinessConfig } from "./composables/useBusinessConfig";
 
 const { businessName } = useBusinessConfig();
-const { messages, isSending, error, sendMessage, hasApiKey, isResolved, resetChat } = useChat(businessName);
+const { messages, isSending, statusText, error, sendMessage, hasApiKey, isResolved, resetChat } = useChat(businessName);
 
 const initials = computed(() => {
   const words = (businessName.value || "").trim().split(/\s+/).filter(Boolean);
@@ -74,6 +74,7 @@ const isStandalone = window.parent === window;
           :messages="messages"
           :error="error"
           :is-sending="isSending"
+          :status-text="statusText"
           :initials="initials"
           @quick-action="sendMessage"
         />

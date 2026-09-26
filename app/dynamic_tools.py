@@ -12,6 +12,7 @@ link-local/metadata) right before the request is made, not just when the
 tool is saved in the admin panel - DNS can change between save and use.
 """
 
+import asyncio
 import ipaddress
 import json
 import re
@@ -112,14 +113,21 @@ def _is_blocked_ip(ip) -> bool:
     )
 
 
-def _assert_url_is_safe(url: str) -> None:
+async def _assert_url_is_safe(url: str) -> None:
     """Raises ValueError if `url` is not safe to fetch server-side. Blocks:
     non-http(s) schemes, missing hostname, and any hostname that resolves
     to a private/loopback/link-local/reserved IP (covers localhost,
     127.0.0.1, internal networks like 10.x/192.168.x, and cloud metadata
     endpoints like 169.254.169.254, which falls under link-local). NAT64-
     synthesized addresses are unwrapped first so genuine public IPv4
-    destinations aren't blocked just because of how they were resolved."""
+    destinations aren't blocked just because of how they were resolved.
+
+    socket.getaddrinfo() is a BLOCKING call - it does real network I/O
+    (a DNS lookup) with no async variant in the stdlib socket module.
+    Calling it directly here would stall the entire event loop (every
+    other concurrent request this process is handling, not just this
+    one) for however long the DNS lookup takes. asyncio.to_thread runs
+    it on a worker thread instead, so the event loop stays free."""
     parsed = urlparse(url)
 
     if parsed.scheme not in ALLOWED_SCHEMES:
@@ -130,7 +138,7 @@ def _assert_url_is_safe(url: str) -> None:
         raise ValueError("URL has no hostname")
 
     try:
-        resolved = socket.getaddrinfo(hostname, None)
+        resolved = await asyncio.to_thread(socket.getaddrinfo, hostname, None)
     except socket.gaierror as e:
         raise ValueError(f"Could not resolve hostname '{hostname}': {e}")
 
@@ -236,7 +244,7 @@ async def execute_tool(tool: dict, params: dict) -> dict:
             return {"error": f"Missing required path parameter: {match}"}
 
     try:
-        _assert_url_is_safe(url)
+        await _assert_url_is_safe(url)
     except ValueError as e:
         return {"error": f"Blocked unsafe tool URL: {e}"}
 

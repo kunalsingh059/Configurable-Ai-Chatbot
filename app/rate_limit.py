@@ -1,97 +1,64 @@
 """
-Minimal in-memory rate limiter - deliberately no Redis/external dependency.
+Redis-backed rate limiter. Replaces the old in-memory-dict version - see
+that version's own docstring (still worth reading in git history) for why:
+a plain Python dict only sees requests handled by ITS OWN process, so the
+moment you run more than one uvicorn worker (which you need to, for the
+horizontal scaling this app is being upgraded for), each worker enforces
+the limit independently and the real effective limit becomes
+(limit x number of workers). Redis gives every worker the same counter.
 
-CAVEAT: single-process only. This dict lives in one Python process's memory,
-same as SESSIONS in main.py - if you ever run multiple uvicorn workers or
-multiple instances behind a load balancer, each one enforces the limit
-independently, so the *effective* limit becomes (limit x number of workers).
-Fine for a single-instance MVP launch; move to Redis (INCR + EXPIRE) if you
-scale beyond one process, same as the SESSIONS TODO.
+FIXED WINDOW, not sliding window: this is a deliberate simplification from
+the old sliding-window version. A fixed window (INCR + EXPIRE, one round
+trip) is one Redis call; a true sliding window (sorted sets: ZADD +
+ZREMRANGEBYSCORE + ZCARD) is three. For a chat rate limit, "burstable at
+the edge of a 60s window" is an acceptable tradeoff for 1/3rd the Redis
+load per request - this is not a security boundary, just abuse prevention.
+
+FAILS OPEN: if Redis itself is unreachable, we log it and let the request
+through rather than 500-ing every chat message because of a transient
+Redis blip. Rate limiting is a safety net for cost/abuse control, not a
+security control - it should never be the reason the whole product goes
+down.
 """
 
 import logging
 import os
-import time
-from collections import defaultdict
 from fastapi import HTTPException, Request
+from redis.exceptions import RedisError
+from app.redis_client import get_redis
 
 logger = logging.getLogger("chatbot_platform")
 
-_hits: dict[str, list[float]] = defaultdict(list)
 
-# Every unique key ever passed to check_rate_limit (an IP, a username, a
-# session_id) leaves a permanent entry in _hits for the lifetime of the
-# process, even once its timestamp list has fully emptied out - nothing
-# previously removed the key itself, only stale timestamps INSIDE a key's
-# list on that key's own next access. A key that's never accessed again
-# (a one-time visitor) just sits there forever. This mirrors SESSIONS'
-# _cleanup_idle_sessions pattern in main.py to fix that.
-_last_cleanup = 0.0
-# Conservative upper bound - every current caller uses the default 60s
-# window (see main.py's check_rate_limit call sites), so anything older
-# than this is safe to consider dead regardless of which key it belongs to.
-_CLEANUP_STALE_AFTER_SECONDS = 300
-
-
-def _cleanup_stale_entries() -> None:
-    """Runs at most once every 5 minutes. Trims stale timestamps from every
-    key's list (same logic check_rate_limit already does on access) and
-    then drops any key that's now empty, so a one-time visitor's rate-limit
-    entry doesn't live in memory forever."""
-    global _last_cleanup
-    now = time.time()
-    if now - _last_cleanup < 300:
+async def check_rate_limit(key: str, max_requests: int, window_seconds: int = 60) -> None:
+    """Fixed-window check: raises 429 if `key` has made >= max_requests
+    calls in the current window_seconds-wide window. Otherwise records
+    this call. Call sites are unchanged (main.py) other than adding
+    `await` - this used to be a sync function."""
+    redis_key = f"ratelimit:{key}"
+    r = get_redis()
+    try:
+        # INCR on a key that doesn't exist yet creates it at 1 - so
+        # "current == 1" means this is the first hit in a fresh window,
+        # and that's the only time we need to (re)set the expiry.
+        current = await r.incr(redis_key)
+        if current == 1:
+            await r.expire(redis_key, window_seconds)
+    except RedisError as e:
+        logger.error(f"Rate limit check failed for '{key}' - Redis unreachable, failing open: {e}")
         return
-    _last_cleanup = now
 
-    cutoff = now - _CLEANUP_STALE_AFTER_SECONDS
-    empty_keys = []
-    for key, hits in _hits.items():
-        while hits and hits[0] < cutoff:
-            hits.pop(0)
-        if not hits:
-            empty_keys.append(key)
-    for key in empty_keys:
-        del _hits[key]
-
-
-def check_rate_limit(key: str, max_requests: int, window_seconds: int = 60) -> None:
-    """Sliding-window check: raises 429 if `key` has made >= max_requests
-    calls in the last `window_seconds`. Otherwise records this call."""
-    _cleanup_stale_entries()
-    now = time.time()
-    hits = _hits[key]
-    cutoff = now - window_seconds
-    while hits and hits[0] < cutoff:
-        hits.pop(0)
-    if len(hits) >= max_requests:
+    if current > max_requests:
         raise HTTPException(
             status_code=429,
             detail="Too many requests - please slow down and try again shortly.",
         )
-    hits.append(now)
 
 
 # ---------------------------------------------------------------------------
-# Real client IP behind a reverse proxy
+# Real client IP behind a reverse proxy - unchanged from before, this part
+# never needed Redis (no shared state, just parses one request's headers).
 # ---------------------------------------------------------------------------
-# On Render (and any host with a load balancer in front of the app),
-# request.client.host is the PROXY's address, not the visitor's - so every
-# per-IP limit would be shared by all visitors at once. The proxy puts the
-# visitor's address in X-Forwarded-For instead.
-#
-# X-Forwarded-For can also be written by the visitor themselves, so it is only
-# trusted by position: each proxy in front of the app APPENDS the address it
-# saw, so with N trusted proxies the real client is the N-th entry counted
-# from the RIGHT. Anything further left is client-supplied and ignored.
-#
-# TRUSTED_PROXY_HOPS = how many proxies sit in front of the app.
-#   0 (default) = ignore X-Forwarded-For, use the direct connection address
-#                 (correct for local dev / no proxy - identical to old behavior).
-# Too LOW a value makes many visitors share one IP (over-limits real users);
-# too HIGH a value lets a visitor spoof their IP. Verify it after deploying:
-# set LOG_LEVEL=DEBUG, call the API from two different networks (e.g. Wi-Fi and
-# mobile data) and confirm the logged client_ip values differ.
 TRUSTED_PROXY_HOPS = int(os.environ.get("TRUSTED_PROXY_HOPS", "0"))
 
 

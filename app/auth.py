@@ -252,7 +252,7 @@ async def get_tenant_from_api_key(
     """
     # Throttle per real client IP FIRST - before any DB lookup - so garbage
     # keys and floods can't be used to hammer the database either.
-    check_rate_limit(f"public-ip:{get_client_ip(request)}", PUBLIC_IP_RATE_LIMIT_PER_MINUTE)
+    await check_rate_limit(f"public-ip:{get_client_ip(request)}", PUBLIC_IP_RATE_LIMIT_PER_MINUTE)
 
     if not x_api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")

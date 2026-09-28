@@ -32,6 +32,7 @@ from app.crypto import encrypt_headers
 from app.mock_llm import run_mock_chat_turn_stream
 from app.groq_client import run_groq_chat_turn_stream
 from app.documents import extract_text, get_tenant_documents, ingest_document_chunks, delete_document_chunks
+from app.embeddings import warm_up as warm_up_embeddings
 from app.email_service import send_password_reset_email
 from app.rate_limit import check_rate_limit, get_client_ip
 from app.redis_client import get_redis, ping as redis_ping
@@ -302,6 +303,22 @@ async def ensure_indexes():
             )
     except Exception as e:
         logger.error(f"reset_token_version migration failed: {e}")
+
+
+# Kept at module level so the background task isn't garbage-collected
+# mid-load (asyncio only holds weak references to tasks).
+_embedding_warmup_task: "asyncio.Task | None" = None
+
+
+@app.on_event("startup")
+async def warm_up_embedding_model():
+    # Fire-and-forget on purpose: the server opens its port immediately
+    # (Render's port scan doesn't time out) while the ~90MB model loads in
+    # a worker thread. A chat/upload that arrives before it finishes just
+    # waits on the same single load (see the lock in app/embeddings.py) -
+    # it never triggers a second one. warm_up() never raises.
+    global _embedding_warmup_task
+    _embedding_warmup_task = asyncio.create_task(warm_up_embeddings())
 
 
 @app.on_event("startup")

@@ -96,34 +96,51 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="mx-auto max-w-2xl px-4 py-8">
-    <div class="mb-6 flex items-center justify-between">
-      <div>
-        <h1 class="text-lg font-semibold text-navy-950">Business owners</h1>
-        <p class="text-sm text-slate-500">Activate accounts to let them use the platform.</p>
+  <!--
+    Responsive notes (mobile-first):
+    - Container widens with the screen: full-width on phones, max-w-2xl on
+      tablets, max-w-3xl on desktop. Padding scales up too.
+    - Header wraps instead of squeezing: the Log out button never shrinks or
+      breaks onto two lines (shrink-0 + whitespace-nowrap), and the title
+      block can shrink/wrap freely (min-w-0).
+    - Inputs use text-base on phones (16px) so iOS Safari doesn't zoom the
+      page when the search box is focused; back to text-sm from sm: up.
+    - Owner rows stack on phones (name on top, badge + button below), and go
+      side-by-side from sm: up, so long names/business IDs stay readable.
+    - Tap targets are at least ~40px tall on phones.
+  -->
+  <div class="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6 sm:py-8 md:max-w-3xl">
+    <!-- Header -->
+    <div class="mb-5 flex items-start justify-between gap-3 sm:mb-6 sm:items-center">
+      <div class="min-w-0">
+        <h1 class="text-lg font-semibold text-navy-950 sm:text-xl">Business owners</h1>
+        <p class="mt-0.5 text-sm text-slate-500">Activate accounts to let them use the platform.</p>
       </div>
-      <button class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-navy-900 hover:border-amber-500" @click="showLogoutConfirm = true">
+      <button
+        class="min-h-[40px] shrink-0 whitespace-nowrap rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-medium text-navy-900 transition hover:border-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 active:bg-slate-50 sm:text-sm"
+        @click="showLogoutConfirm = true"
+      >
         Log out
       </button>
     </div>
 
     <!-- Stats -->
-    <div v-if="!isLoading && totalCount > 0" class="mb-4 grid grid-cols-3 gap-3">
-      <div class="rounded-2xl bg-white p-4 text-center shadow-sm ring-1 ring-slate-100">
-        <p class="text-2xl font-semibold text-navy-950">{{ totalCount }}</p>
+    <div v-if="!isLoading && totalCount > 0" class="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
+      <div class="min-w-0 rounded-2xl bg-white p-3 text-center shadow-sm ring-1 ring-slate-100 sm:p-4">
+        <p class="text-xl font-semibold text-navy-950 sm:text-2xl">{{ totalCount }}</p>
         <p class="text-xs text-slate-500">Total</p>
       </div>
-      <div class="rounded-2xl bg-white p-4 text-center shadow-sm ring-1 ring-slate-100">
-        <p class="text-2xl font-semibold text-emerald-600">{{ activeCount }}</p>
+      <div class="min-w-0 rounded-2xl bg-white p-3 text-center shadow-sm ring-1 ring-slate-100 sm:p-4">
+        <p class="text-xl font-semibold text-emerald-600 sm:text-2xl">{{ activeCount }}</p>
         <p class="text-xs text-slate-500">Active</p>
       </div>
-      <div class="rounded-2xl bg-white p-4 text-center shadow-sm ring-1 ring-slate-100">
-        <p class="text-2xl font-semibold text-amber-600">{{ pendingCount }}</p>
+      <div class="min-w-0 rounded-2xl bg-white p-3 text-center shadow-sm ring-1 ring-slate-100 sm:p-4">
+        <p class="text-xl font-semibold text-amber-600 sm:text-2xl">{{ pendingCount }}</p>
         <p class="text-xs text-slate-500">Pending</p>
       </div>
     </div>
 
-    <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
+    <div class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100 sm:p-5">
       <p v-if="error" class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">{{ error }}</p>
       <p v-if="isLoading" class="text-xs text-slate-400">Loading...</p>
 
@@ -135,8 +152,8 @@ onMounted(load);
 
       <template v-else>
         <!-- Search + filter -->
-        <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div class="relative flex-1">
+        <div class="mb-4 flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
+          <div class="relative min-w-0 flex-1">
             <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="7" />
               <path d="m20 20-3.5-3.5" />
@@ -145,14 +162,15 @@ onMounted(load);
               v-model="searchQuery"
               type="text"
               placeholder="Search by name or business..."
-              class="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-amber-500"
+              class="min-h-[44px] w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-base outline-none focus:border-amber-500 sm:text-sm"
             />
           </div>
-          <div class="flex shrink-0 gap-1.5">
+          <!-- Filter pills: stretch to fill the row on phones, natural width from md: up -->
+          <div class="grid shrink-0 grid-cols-3 gap-1.5 md:flex">
             <button
               v-for="opt in [{ key: 'all', label: 'All' }, { key: 'active', label: 'Active' }, { key: 'pending', label: 'Pending' }]"
               :key="opt.key"
-              class="rounded-lg px-3 py-2 text-xs font-medium transition"
+              class="min-h-[40px] rounded-lg px-3 py-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 md:min-h-0"
               :class="statusFilter === opt.key ? 'bg-navy-950 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'"
               @click="statusFilter = opt.key"
             >
@@ -166,21 +184,26 @@ onMounted(load);
         </div>
 
         <ul v-else class="divide-y divide-slate-100">
-          <li v-for="owner in filteredOwners" :key="owner.id" class="flex items-center justify-between py-3">
+          <!-- Stacked on phones, side-by-side from sm: up -->
+          <li
+            v-for="owner in filteredOwners"
+            :key="owner.id"
+            class="flex flex-col gap-2.5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+          >
             <div class="min-w-0">
               <p class="truncate text-sm font-medium text-navy-950">{{ owner.username }}</p>
               <p class="truncate text-xs text-slate-500">{{ owner.tenant_id }}</p>
             </div>
-            <div class="flex shrink-0 items-center gap-3">
+            <div class="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
               <span
-                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                class="rounded-full px-2.5 py-0.5 text-[11px] font-medium"
                 :class="owner.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'"
               >
                 {{ owner.is_active ? "Active" : "Pending" }}
               </span>
               <button
                 :disabled="pendingId === owner.id"
-                class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-navy-900 hover:border-amber-500 disabled:opacity-50"
+                class="min-h-[40px] whitespace-nowrap rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-medium text-navy-900 transition hover:border-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 active:bg-slate-50 disabled:opacity-50 sm:min-h-0"
                 @click="toggle(owner)"
               >
                 {{ owner.is_active ? "Deactivate" : "Activate" }}

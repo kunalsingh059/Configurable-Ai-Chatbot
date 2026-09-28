@@ -129,7 +129,6 @@ async function submit() {
             v-model="email"
             type="email"
             required
-            placeholder="you@yourbusiness.com"
             class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
           />
         </div>

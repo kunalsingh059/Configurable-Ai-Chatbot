@@ -124,7 +124,7 @@ onMounted(load);
         />
         <p class="mt-1 text-[11px] text-slate-400">
           "mysite.com" also allows www.mysite.com and other subdomains. Add every site that shows your
-          widget, or it will disappear there. Add "localhost" to test on your own computer.
+          widget, or it will disappear there.
         </p>
         <button
           type="submit"

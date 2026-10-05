@@ -635,6 +635,8 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
     conversation.append({"role": "user", "content": req.message})
 
     message_id = f"msg_{secrets.token_hex(8)}"
+    owner_user = await admin_users_collection.find_one({"tenant_id": tenant_id, "role": "business_owner"})
+    bot_config = (owner_user.get("bot_config") if owner_user else None) or {}
 
     async def event_stream():
         try:
@@ -642,9 +644,9 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
             # startup (see the fail-closed check above) - nothing else can
             # reach this point, so no silent third fallback.
             if LLM_PROVIDER == "mock":
-                gen = run_mock_chat_turn_stream(tenant_id, conversation)
+                gen = run_mock_chat_turn_stream(tenant_id, conversation, bot_config=bot_config)
             else:
-                gen = run_groq_chat_turn_stream(tenant_id, conversation)
+                gen = run_groq_chat_turn_stream(tenant_id, conversation, bot_config=bot_config)
 
             # Bounds the ENTIRE multi-hop tool-calling loop, not just a
             # single LLM call or a single chunk - without this, up to 5

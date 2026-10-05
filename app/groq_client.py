@@ -76,6 +76,45 @@ SYSTEM_PROMPT = (
     "heavy for a chat bubble."
 )
 
+# T3: Multi-language & Hinglish instruction
+LANGUAGE_PROMPT_INSTRUCTION = (
+    "\n\nLanguage and Script Style Guidelines:\n"
+    "- Mirror the language and script style used in the user's latest message:\n"
+    "  * If the user writes in English, reply in natural English.\n"
+    "  * If the user writes in Hindi using Devanagari script (e.g. 'नमस्ते, क्या हाल है?'), reply in natural Hindi using Devanagari script.\n"
+    "  * If the user writes in Hinglish (Hindi words written in Latin/English alphabet, e.g. 'ye test kitne ka hai?'), reply in natural conversational Hinglish using Latin alphabet.\n"
+    "- Always preserve technical identifiers, product names, tool names, parameters, codes, and numerical/currency figures (e.g. ₹500, #1024, 10:00 AM) in their standard representation without translating them."
+)
+
+TONE_INSTRUCTIONS = {
+    "friendly": "\nTone: Maintain a warm, friendly, encouraging, and helpful tone.",
+    "professional": "\nTone: Maintain a polished, professional, concise, and courteous tone.",
+    "casual": "\nTone: Maintain a relaxed, easygoing, conversational, and approachable tone.",
+}
+
+
+def build_system_prompt(
+    tenant_tools: list[dict],
+    documents_context: str,
+    bot_config: dict | None = None,
+) -> str:
+    config = bot_config or {}
+    prompt = SYSTEM_PROMPT
+
+    tone = (config.get("tone") or "friendly").lower()
+    if tone in TONE_INSTRUCTIONS:
+        prompt += TONE_INSTRUCTIONS[tone]
+
+    reply_in_user_lang = config.get("reply_in_user_language", True)
+    if reply_in_user_lang:
+        prompt += LANGUAGE_PROMPT_INSTRUCTION
+
+    prompt += build_capabilities_note(tenant_tools, documents_context)
+    if documents_context:
+        prompt += documents_context
+
+    return prompt
+
 
 def build_capabilities_note(tenant_tools: list[dict], documents_context: str) -> str:
     """Grounds the model in what THIS business actually has configured, so
@@ -140,7 +179,11 @@ async def _run_one_tool_call(tc: dict, tools_by_name: dict) -> dict:
     return {"role": "tool", "tool_call_id": tc["id"], "content": format_tool_result_for_llm(result)}
 
 
-async def run_groq_chat_turn_stream(tenant_id: str, conversation: list[dict]):
+async def run_groq_chat_turn_stream(
+    tenant_id: str,
+    conversation: list[dict],
+    bot_config: dict | None = None,
+):
     """
     Async generator version of the chat turn. Yields dicts describing what
     happened as it happens, instead of returning only once everything is
@@ -169,7 +212,7 @@ async def run_groq_chat_turn_stream(tenant_id: str, conversation: list[dict]):
     if conversation and isinstance(conversation[-1].get("content"), str):
         latest_user_message = conversation[-1]["content"]
     documents_context = await build_documents_context(tenant_id, latest_user_message)
-    system_prompt = SYSTEM_PROMPT + build_capabilities_note(tenant_tools, documents_context) + documents_context
+    system_prompt = build_system_prompt(tenant_tools, documents_context, bot_config)
 
     messages = [{"role": "system", "content": system_prompt}]
     for msg in conversation:

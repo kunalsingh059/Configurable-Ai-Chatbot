@@ -59,3 +59,15 @@ This document tracks all changes, architecture decisions, new collections/indexe
     - Compound index: `[("tenant_id", 1), ("status", 1), ("timestamp", -1)]`
 - **Performance & Latency:**
   - Unanswered detection writes via `asyncio.create_task` at turn completion; adds 0ms to user streaming TTFT.
+
+---
+
+### Task T3: Multi-language Replies (including Hinglish)
+- **Status:** Complete
+- **Files Modified:**
+  - `app/groq_client.py`: Added `LANGUAGE_PROMPT_INSTRUCTION` (handling English, Hindi Devanagari, and Hinglish in Latin script while locking down entity names, prices, and parameters), `TONE_INSTRUCTIONS`, and `build_system_prompt()`.
+  - `app/mock_llm.py`: Added `bot_config` parameter support.
+  - `app/main.py`: Retrieved tenant `bot_config` and forwarded it to `run_groq_chat_turn_stream`.
+  - `tests/test_t3_multilanguage.py`: Unit tests validating script-matching prompt injection, disabling via `reply_in_user_language=False`, and tone adaptations.
+- **Performance & Latency:**
+  - 0 additional network requests, 0 latency overhead. Groq natively generates multilingual responses.

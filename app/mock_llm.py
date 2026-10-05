@@ -67,7 +67,11 @@ async def run_mock_chat_turn(tenant_id: str, conversation: list[dict]) -> tuple[
     return reply, conversation
 
 
-async def run_mock_chat_turn_stream(tenant_id: str, conversation: list[dict]):
+async def run_mock_chat_turn_stream(
+    tenant_id: str,
+    conversation: list[dict],
+    bot_config: dict | None = None,
+):
     """Streaming-shaped wrapper around the mock turn above, so main.py can
     call either provider through the same streaming interface. Mock mode
     has no real token-by-token generation to stream, so it just yields the

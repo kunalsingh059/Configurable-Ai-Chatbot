@@ -7,6 +7,18 @@ paste its connection string into .env as MONGO_URI.
 """
 
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
+# Ensure robust DNS SRV resolution across local Windows dev networks / routers
+try:
+    import dns.resolver
+    _default_resolver = dns.resolver.get_default_resolver()
+    if _default_resolver and "8.8.8.8" not in _default_resolver.nameservers:
+        _default_resolver.nameservers.extend(["8.8.8.8", "1.1.1.1"])
+except Exception:
+    pass
+
 from motor.motor_asyncio import AsyncIOMotorClient
 
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
@@ -36,3 +48,9 @@ admin_users_collection = db["admin_users"]
 # (list/delete a whole uploaded file); this collection is the retrieval
 # index Atlas Vector Search actually queries against. See app/documents.py.
 document_chunks_collection = db["document_chunks"]
+
+# T1: Feedback collection - thumbs up/down ratings per message
+feedback_collection = db["feedback"]
+
+# T2: Unanswered questions collection - tracks queries the bot could not answer
+unanswered_collection = db["unanswered_questions"]

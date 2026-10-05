@@ -46,7 +46,13 @@ export function useChat(businessNameRef) {
     // stream arrives. MessageList hides the typing dots as soon as this
     // has any content, so the transition from "..." to real text is
     // seamless rather than a dots-then-pop-in-all-at-once swap.
-    const assistantIndex = messages.value.push({ role: "assistant", content: "" }) - 1;
+    const tempMessageId = "msg_" + Math.random().toString(36).slice(2, 10);
+    const assistantIndex = messages.value.push({
+      role: "assistant",
+      content: "",
+      message_id: tempMessageId,
+      rating: null,
+    }) - 1;
     isSending.value = true;
     statusText.value = null;
     error.value = null;
@@ -153,6 +159,9 @@ export function useChat(businessNameRef) {
             messages.value.splice(assistantIndex, 1);
           }
         } else if (payload.type === "done") {
+          if (payload.message_id) {
+            messages.value[assistantIndex].message_id = payload.message_id;
+          }
           // Backstop: if for any reason no token events arrived (a
           // provider that doesn't stream, an edge case), the full text
           // is still here on "done" so the bubble never ends up empty.
@@ -161,6 +170,40 @@ export function useChat(businessNameRef) {
           }
         }
       }
+    }
+  }
+
+  async function submitFeedback(messageId, rating, comment = null) {
+    if (!apiKey.value || !messageId) return;
+    const idx = messages.value.findIndex((m) => m.message_id === messageId);
+    if (idx !== -1) {
+      messages.value[idx].rating = rating;
+    }
+
+    const targetMsg = idx !== -1 ? messages.value[idx] : null;
+    const prevMsg = idx > 0 ? messages.value[idx - 1] : null;
+    const userQuestion = prevMsg && prevMsg.role === "user" ? prevMsg.content : null;
+    const botAnswer = targetMsg ? targetMsg.content : null;
+
+    try {
+      await fetch(`${API_BASE}/api/feedback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": apiKey.value,
+          ...(parentOrigin.value ? { "X-Embed-Origin": parentOrigin.value } : {}),
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          message_id: messageId,
+          rating,
+          comment,
+          user_question: userQuestion,
+          bot_answer: botAnswer,
+        }),
+      });
+    } catch (err) {
+      console.error("Failed to submit feedback:", err);
     }
   }
 
@@ -173,5 +216,15 @@ export function useChat(businessNameRef) {
 
   const hasApiKey = computed(() => !!apiKey.value);
 
-  return { messages, isSending, statusText, error, sendMessage, hasApiKey, isResolved, resetChat };
+  return {
+    messages,
+    isSending,
+    statusText,
+    error,
+    sendMessage,
+    submitFeedback,
+    hasApiKey,
+    isResolved,
+    resetChat,
+  };
 }

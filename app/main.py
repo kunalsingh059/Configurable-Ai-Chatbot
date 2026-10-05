@@ -13,8 +13,10 @@ from pymongo.errors import DuplicateKeyError
 import os
 import time
 import json
+import secrets
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
@@ -25,8 +27,15 @@ logging.basicConfig(
     # logger.info()/logger.error() call in this app up to now.
 )
 logger = logging.getLogger("chatbot_platform")
-from app.db import client, tools_collection, documents_collection, admin_users_collection
-from app.models import ToolModel, ToolTestModel, DocumentModel, RegisterModel, LoginModel, BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, AllowedDomainsModel, derive_business_name, serialize_tool, serialize_document
+from app.db import (
+    client, tools_collection, documents_collection, admin_users_collection,
+    feedback_collection, unanswered_collection,
+)
+from app.models import (
+    ToolModel, ToolTestModel, DocumentModel, RegisterModel, LoginModel,
+    BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, AllowedDomainsModel,
+    FeedbackModel, derive_business_name, serialize_tool, serialize_document,
+)
 from app.dynamic_tools import get_tenant_tools, execute_tool, format_tool_result_for_llm
 from app.crypto import encrypt_headers
 from app.mock_llm import run_mock_chat_turn_stream
@@ -277,6 +286,13 @@ async def ensure_indexes():
         # businesses accumulate real data.
         await tools_collection.create_index("tenant_id")
         await documents_collection.create_index("tenant_id")
+        # Feedback indexes: one rating per message per tenant, plus fast date sorting
+        await feedback_collection.create_index(
+            [("tenant_id", 1), ("message_id", 1)], unique=True
+        )
+        await feedback_collection.create_index([("tenant_id", 1), ("created_at", -1)])
+        # Unanswered questions indexes: query by status, date sorting
+        await unanswered_collection.create_index([("tenant_id", 1), ("status", 1), ("timestamp", -1)])
     except Exception as e:
         # Don't crash startup over this - most likely cause is duplicate
         # data already in the DB from before these indexes existed, which
@@ -618,6 +634,8 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
     conversation = await get_session_conversation(session_key)
     conversation.append({"role": "user", "content": req.message})
 
+    message_id = f"msg_{secrets.token_hex(8)}"
+
     async def event_stream():
         try:
             # LLM_PROVIDER is validated to be exactly "mock" or "groq" at
@@ -648,8 +666,10 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
                 if event["type"] == "done":
                     # Keep only the most recent messages - see MAX_CONVERSATION_HISTORY comment above.
                     updated_conversation = event["conversation"][-MAX_CONVERSATION_HISTORY:]
+                    if updated_conversation and isinstance(updated_conversation[-1], dict) and updated_conversation[-1].get("role") == "assistant":
+                        updated_conversation[-1]["message_id"] = message_id
                     await save_session_conversation(session_key, updated_conversation)
-                    yield _sse({"type": "done", "text": event["text"]})
+                    yield _sse({"type": "done", "text": event["text"], "message_id": message_id})
                     return
 
                 yield _sse(event)
@@ -701,6 +721,38 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ---------------------------- Feedback endpoint (T1) ----------------------------
+@app.post("/api/feedback")
+@app.post("/feedback")
+async def submit_feedback(
+    payload: FeedbackModel,
+    tenant_id: str = Depends(get_tenant_from_api_key),
+):
+    """Stores user rating (thumbs up / down) and optional comment for a bot answer.
+    Guarantees one rating per message_id via atomic upsert. Tenant-isolated."""
+    now = datetime.now(timezone.utc)
+    doc = {
+        "tenant_id": tenant_id,
+        "session_id": payload.session_id,
+        "message_id": payload.message_id,
+        "rating": payload.rating,
+        "comment": payload.comment,
+        "user_question": payload.user_question,
+        "bot_answer": payload.bot_answer,
+        "updated_at": now,
+    }
+    await feedback_collection.update_one(
+        {"tenant_id": tenant_id, "message_id": payload.message_id},
+        {
+            "$set": doc,
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+    return {"status": "ok", "message_id": payload.message_id, "rating": payload.rating}
+
 
 @app.get("/widget/config")
 async def widget_config(tenant_id: str = Depends(get_tenant_from_api_key)):

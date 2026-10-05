@@ -9,7 +9,7 @@ const props = defineProps({
   statusText: { type: String, default: null },
   initials: { type: String, default: "AI" },
 });
-const emit = defineEmits(["quick-action"]);
+const emit = defineEmits(["quick-action", "rate"]);
 
 const scrollEl = ref(null);
 
@@ -49,11 +49,20 @@ watch(
       </button>
     </div>
 
-    <template v-for="(m, i) in messages" :key="i">
+    <template v-for="(m, i) in messages" :key="m.message_id || i">
       <!-- The trailing empty assistant placeholder (content still
            streaming in, nothing arrived yet) renders as the typing
            indicator below instead of an empty bubble. -->
-      <MessageBubble v-if="m.role === 'user' || m.content" :role="m.role" :content="m.content" :initials="initials" />
+      <MessageBubble
+        v-if="m.role === 'user' || m.content"
+        :role="m.role"
+        :content="m.content"
+        :initials="initials"
+        :message-id="m.message_id"
+        :rating="m.rating"
+        :is-streaming="isSending && i === messages.length - 1"
+        @rate="(rating) => emit('rate', { messageId: m.message_id, rating })"
+      />
     </template>
 
     <div v-if="showTypingIndicator" class="flex items-end gap-2">

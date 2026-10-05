@@ -40,14 +40,25 @@ class ToolModel(BaseModel):
     url_template: str
     headers: dict = {}
     params_schema: dict
-    # Optional allowlist of top-level keys to keep from a successful JSON
-    # response before it's sent to the LLM. Empty = send everything
-    # (subject to the character truncation in format_tool_result_for_llm).
-    # Live APIs often return far more than a chat answer needs - Open Food
-    # Facts, for example, returns 100+ fields per product - so trimming to
-    # just the fields that matter keeps every follow-up turn cheaper and
-    # keeps the model from getting distracted by irrelevant data.
     response_fields: list[str] = []
+
+    @field_validator("url_template")
+    @classmethod
+    def validate_url_template(cls, v: str) -> str:
+        v = v.strip()
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("URL template must start with http:// or https://")
+        return v
+
+
+class FeedbackModel(BaseModel):
+    """User rating (up/down) and optional comment for a specific chatbot response."""
+    session_id: str = Field(..., min_length=1, max_length=200)
+    message_id: str = Field(..., min_length=1, max_length=200)
+    rating: str = Field(..., pattern="^(up|down)$")
+    comment: Optional[str] = Field(None, max_length=500)
+    user_question: Optional[str] = Field(None, max_length=1000)
+    bot_answer: Optional[str] = Field(None, max_length=5000)
 
 
 class ToolTestModel(BaseModel):

@@ -9,7 +9,17 @@ import { useChat } from "./composables/useChat";
 import { useBusinessConfig } from "./composables/useBusinessConfig";
 
 const { businessName } = useBusinessConfig();
-const { messages, isSending, statusText, error, sendMessage, hasApiKey, isResolved, resetChat } = useChat(businessName);
+const {
+  messages,
+  isSending,
+  statusText,
+  error,
+  sendMessage,
+  submitFeedback,
+  hasApiKey,
+  isResolved,
+  resetChat,
+} = useChat(businessName);
 
 const initials = computed(() => {
   const words = (businessName.value || "").trim().split(/\s+/).filter(Boolean);
@@ -77,6 +87,7 @@ const isStandalone = window.parent === window;
           :status-text="statusText"
           :initials="initials"
           @quick-action="sendMessage"
+          @rate="({ messageId, rating }) => submitFeedback(messageId, rating)"
         />
         <ChatInput :disabled="isSending" @send="sendMessage" />
       </template>

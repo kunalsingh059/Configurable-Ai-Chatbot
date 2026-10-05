@@ -178,6 +178,9 @@ async def run_groq_chat_turn_stream(tenant_id: str, conversation: list[dict]):
         else:
             messages.extend(msg["content"])
 
+    tools_executed_count = 0
+    has_doc_context = bool(documents_context and documents_context.strip())
+
     for _ in range(MAX_TOOL_HOPS):
         stream = await client.chat.completions.create(
             model=GROQ_MODEL,
@@ -217,10 +220,17 @@ async def run_groq_chat_turn_stream(tenant_id: str, conversation: list[dict]):
         if not tool_call_accum:
             final_text = "".join(content_parts)
             conversation.append({"role": "assistant", "content": final_text})
-            yield {"type": "done", "text": final_text, "conversation": conversation}
+            yield {
+                "type": "done",
+                "text": final_text,
+                "conversation": conversation,
+                "tools_called_count": tools_executed_count,
+                "has_doc_context": has_doc_context,
+            }
             return
 
         tool_calls = [tool_call_accum[i] for i in sorted(tool_call_accum)]
+        tools_executed_count += len(tool_calls)
 
         assistant_msg = {
             "role": "assistant",
@@ -247,7 +257,14 @@ async def run_groq_chat_turn_stream(tenant_id: str, conversation: list[dict]):
 
     fallback = "Sorry, I'm having trouble completing that request right now."
     conversation.append({"role": "assistant", "content": fallback})
-    yield {"type": "done", "text": fallback, "conversation": conversation}
+    yield {
+        "type": "done",
+        "text": fallback,
+        "conversation": conversation,
+        "tools_called_count": tools_executed_count,
+        "has_doc_context": has_doc_context,
+        "is_fallback": True,
+    }
 
 
 async def run_groq_chat_turn(tenant_id: str, conversation: list[dict]) -> tuple[str, list[dict]]:

@@ -61,6 +61,10 @@ class FeedbackModel(BaseModel):
     bot_answer: Optional[str] = Field(None, max_length=5000)
 
 
+class UnansweredStatusUpdateModel(BaseModel):
+    status: str = Field(..., pattern="^(open|resolved|ignored)$")
+
+
 class ToolTestModel(BaseModel):
     """Body for the 'test this tool live' admin action - same shape as a
     tool's request-building fields, minus the params_schema (the admin

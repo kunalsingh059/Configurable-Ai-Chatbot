@@ -34,7 +34,7 @@ from app.db import (
 from app.models import (
     ToolModel, ToolTestModel, DocumentModel, RegisterModel, LoginModel,
     BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, AllowedDomainsModel,
-    FeedbackModel, derive_business_name, serialize_tool, serialize_document,
+    FeedbackModel, UnansweredStatusUpdateModel, derive_business_name, serialize_tool, serialize_document,
 )
 from app.dynamic_tools import get_tenant_tools, execute_tool, format_tool_result_for_llm
 from app.crypto import encrypt_headers
@@ -669,6 +669,33 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
                     if updated_conversation and isinstance(updated_conversation[-1], dict) and updated_conversation[-1].get("role") == "assistant":
                         updated_conversation[-1]["message_id"] = message_id
                     await save_session_conversation(session_key, updated_conversation)
+
+                    # T2: Detect unanswered questions and log asynchronously
+                    unanswered_reason = None
+                    if event.get("is_fallback"):
+                        unanswered_reason = "system_fallback"
+                    elif not event.get("tools_called_count") and not event.get("has_doc_context"):
+                        bot_text = (event.get("text") or "").lower()
+                        markers = [
+                            "don't have", "do not have", "cannot find", "can't find",
+                            "not able to find", "don't have access", "no information",
+                            "unable to assist", "no specific information", "don't know",
+                        ]
+                        user_q = req.message.strip().lower()
+                        greetings = {"hi", "hello", "hey", "good morning", "good evening", "good afternoon", "thank you", "thanks", "bye", "ok", "okay"}
+                        if user_q not in greetings and any(m in bot_text for m in markers):
+                            unanswered_reason = "no_matching_docs_or_tools"
+
+                    if unanswered_reason:
+                        asyncio.create_task(
+                            log_unanswered_question(
+                                tenant_id=tenant_id,
+                                question=req.message,
+                                session_id=req.session_id,
+                                reason=unanswered_reason,
+                            )
+                        )
+
                     yield _sse({"type": "done", "text": event["text"], "message_id": message_id})
                     return
 
@@ -752,6 +779,76 @@ async def submit_feedback(
         upsert=True,
     )
     return {"status": "ok", "message_id": payload.message_id, "rating": payload.rating}
+
+
+async def log_unanswered_question(tenant_id: str, question: str, session_id: str, reason: str):
+    """Asynchronously logs questions the bot could not answer. Non-blocking."""
+    try:
+        await unanswered_collection.insert_one({
+            "tenant_id": tenant_id,
+            "question": question.strip(),
+            "session_id": session_id,
+            "timestamp": datetime.now(timezone.utc),
+            "reason": reason,
+            "status": "open",
+        })
+    except Exception as e:
+        logger.error(f"Failed to log unanswered question: {e}")
+
+
+# --------------------- Unanswered questions endpoints (T2) ---------------------
+@app.get("/api/admin/unanswered")
+@app.get("/admin/unanswered")
+async def list_unanswered_questions(
+    status: str = "open",
+    page: int = 1,
+    limit: int = 20,
+    tenant_id: str = Depends(get_current_business_owner),
+):
+    query = {"tenant_id": tenant_id}
+    if status and status != "all":
+        query["status"] = status
+
+    total = await unanswered_collection.count_documents(query)
+    open_count = await unanswered_collection.count_documents({"tenant_id": tenant_id, "status": "open"})
+    skip = max(0, (page - 1) * limit)
+    cursor = unanswered_collection.find(query).sort("timestamp", -1).skip(skip).limit(limit)
+
+    items = []
+    async for doc in cursor:
+        items.append({
+            "id": str(doc["_id"]),
+            "question": doc.get("question", ""),
+            "session_id": doc.get("session_id", ""),
+            "timestamp": doc.get("timestamp").isoformat() if doc.get("timestamp") else None,
+            "reason": doc.get("reason", "unknown"),
+            "status": doc.get("status", "open"),
+        })
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "open_count": open_count,
+    }
+
+
+@app.patch("/api/admin/unanswered/{item_id}")
+@app.patch("/admin/unanswered/{item_id}")
+async def update_unanswered_status(
+    item_id: str,
+    payload: UnansweredStatusUpdateModel,
+    tenant_id: str = Depends(get_current_business_owner),
+):
+    oid = parse_object_id(item_id)
+    result = await unanswered_collection.update_one(
+        {"_id": oid, "tenant_id": tenant_id},
+        {"$set": {"status": payload.status, "updated_at": datetime.now(timezone.utc)}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"id": item_id, "status": payload.status}
 
 
 @app.get("/widget/config")

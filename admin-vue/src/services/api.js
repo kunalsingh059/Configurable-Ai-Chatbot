@@ -73,6 +73,12 @@ export const api = {
     return request("/admin/documents", { method: "POST", body: formData, token, isForm: true });
   },
   deleteDocument: (token, id) => request(`/admin/documents/${id}`, { method: "DELETE", token }),
+
+  // Business owner - unanswered questions (T2)
+  listUnanswered: (token, { status = "open", page = 1, limit = 20 } = {}) =>
+    request(`/admin/unanswered?status=${status}&page=${page}&limit=${limit}`, { token }),
+  updateUnansweredStatus: (token, id, status) =>
+    request(`/admin/unanswered/${id}`, { method: "PATCH", body: { status }, token }),
 };
 
 export { ApiError, API_BASE };

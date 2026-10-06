@@ -79,9 +79,9 @@ watch(
       />
     </template>
 
-    <div v-if="showTypingIndicator" class="flex items-end gap-2">
+    <div v-if="showTypingIndicator" class="flex items-start gap-2.5">
       <div
-        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-xs font-semibold text-navy-950"
+        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-xs font-semibold text-navy-950 shadow-xs select-none"
       >
         {{ initials }}
       </div>

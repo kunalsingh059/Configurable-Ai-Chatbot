@@ -106,3 +106,31 @@ This document tracks all changes, architecture decisions, new collections/indexe
   - Zero downtime for customer queries during Groq rate limits (30 RPM free tier ceiling) or unexpected upstream provider outages.
   - Latency impact: 0ms overhead during healthy primary operation; failover executes within <500ms upon primary 429/5xx response.
 
+---
+
+## [Phase 2] - In Progress
+
+### Task T7: Usage Tracking and Quotas
+- **Status:** Complete
+- **Files Modified:**
+  - `app/db.py`: Added `usage_daily_collection` and `leads_collection` references.
+  - `app/models.py`: Added `TenantLimitsModel` for configuring daily and monthly message limits.
+  - `app/main.py`:
+    - Defined IST date boundary helper `get_current_ist_date()` ensuring counters reset at midnight IST (`Asia/Kolkata`, UTC+5:30).
+    - Created compound unique index on `usage_daily` (`(tenant_id, date)`) and sort index `(tenant_id, date DESC)`.
+    - Implemented atomic `$inc` update helper `record_daily_usage()` tracking messages, sessions, tokens, and estimated token flags.
+    - Added pre-stream quota evaluation in `POST /chat` before SSE streaming begins (returns HTTP 429 `QUOTA_EXCEEDED` if exceeded).
+    - Added `PUT /api/superadmin/tenants/{tenant_id}/limits` for superadmin quota management.
+    - Added `GET /api/admin/usage` for business owner usage monitoring.
+    - Updated `GET /superadmin/business-owners` response to include limits.
+  - `widget-vue/src/composables/useChat.js`: Handled HTTP 429 response with user-friendly quota exhaustion message.
+  - `admin-vue/src/services/api.js`: Added `updateTenantLimits` and `getUsage` API methods.
+  - `tests/test_t7_usage.py`: Comprehensive test suite verifying atomic concurrent counter increments, usage queries, limit configuration, and pre-stream 429 rejection.
+- **Database Collections & Indexes:**
+  - `usage_daily`:
+    - Compound unique index: `[("tenant_id", 1), ("date", 1)]`
+    - Sort index: `[("tenant_id", 1), ("date", -1)]`
+- **Concurrency & Reliability:**
+  - Atomic `$inc` MongoDB operator guarantees zero lost updates under concurrent chat traffic.
+  - Usage tracking runs asynchronously in turn completion background task (0ms impact on TTFT).
+

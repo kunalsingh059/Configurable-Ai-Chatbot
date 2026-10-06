@@ -7,7 +7,10 @@ function generateSessionId() {
   return "session-" + Math.random().toString(36).slice(2);
 }
 
-function friendlyErrorFor(status) {
+function friendlyErrorFor(status, detail = null) {
+  if (detail && typeof detail === "string" && detail.includes("QUOTA_EXCEEDED")) {
+    return "This assistant has reached its daily message limit. Please try again tomorrow or contact support.";
+  }
   if (status === 401 || status === 403) {
     return "This widget isn't configured correctly. Please contact the site owner.";
   }
@@ -86,7 +89,7 @@ export function useChat(businessNameRef) {
         const data = await res.json().catch(() => ({}));
         console.error("Chat request failed:", res.status, data);
         messages.value.splice(assistantIndex, 1); // drop the empty placeholder bubble
-        error.value = friendlyErrorFor(res.status);
+        error.value = friendlyErrorFor(res.status, data?.detail);
         return;
       }
 

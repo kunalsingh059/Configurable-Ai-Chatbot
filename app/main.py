@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()  # must run before groq_client.py / auth.py read env vars
 
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -16,7 +16,8 @@ import json
 import secrets
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
@@ -27,14 +28,23 @@ logging.basicConfig(
     # logger.info()/logger.error() call in this app up to now.
 )
 logger = logging.getLogger("chatbot_platform")
+
+# Indian Standard Time (UTC+5:30) for daily date boundaries (T7)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_current_ist_date() -> str:
+    """Returns current date in IST formatted as YYYY-MM-DD."""
+    return datetime.now(IST).strftime("%Y-%m-%d")
+
 from app.db import (
     client, tools_collection, documents_collection, admin_users_collection,
-    feedback_collection, unanswered_collection,
+    feedback_collection, unanswered_collection, usage_daily_collection,
 )
 from app.models import (
     ToolModel, ToolTestModel, DocumentModel, RegisterModel, LoginModel,
     BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, AllowedDomainsModel,
-    FeedbackModel, UnansweredStatusUpdateModel, BotConfigModel, derive_business_name, serialize_tool, serialize_document,
+    FeedbackModel, UnansweredStatusUpdateModel, BotConfigModel, TenantLimitsModel,
+    derive_business_name, serialize_tool, serialize_document,
 )
 from app.dynamic_tools import get_tenant_tools, execute_tool, format_tool_result_for_llm
 from app.crypto import encrypt_headers
@@ -304,6 +314,12 @@ async def ensure_indexes():
         await feedback_collection.create_index([("tenant_id", 1), ("created_at", -1)])
         # Unanswered questions indexes: query by status, date sorting
         await unanswered_collection.create_index([("tenant_id", 1), ("status", 1), ("timestamp", -1)])
+        await unanswered_collection.create_index([("tenant_id", 1), ("created_at", -1)], sparse=True)
+        # Usage daily indexes: compound unique (tenant_id, date) and date sorting (T7, T8)
+        await usage_daily_collection.create_index(
+            [("tenant_id", 1), ("date", 1)], unique=True
+        )
+        await usage_daily_collection.create_index([("tenant_id", 1), ("date", -1)])
     except Exception as e:
         # Don't crash startup over this - most likely cause is duplicate
         # data already in the DB from before these indexes existed, which
@@ -548,6 +564,8 @@ async def list_business_owners(_admin: dict = Depends(get_current_super_admin)):
             "business_name": u.get("business_name", ""),
             "username": u["username"],
             "is_active": u.get("is_active", False),
+            "daily_message_limit": u.get("daily_message_limit"),
+            "monthly_message_limit": u.get("monthly_message_limit"),
         })
     return owners
 
@@ -573,6 +591,35 @@ async def deactivate_business_owner(owner_id: str, _admin: dict = Depends(get_cu
     return {"status": "deactivated"}
 
 
+@app.put("/api/superadmin/tenants/{tenant_id}/limits")
+@app.put("/superadmin/tenants/{tenant_id}/limits")
+async def update_tenant_limits(
+    tenant_id: str,
+    payload: TenantLimitsModel,
+    _admin: dict = Depends(get_current_super_admin),
+):
+    """Sets daily and monthly message quotas for a tenant (super admin only)."""
+    query_conditions = [{"tenant_id": tenant_id}]
+    if ObjectId.is_valid(tenant_id):
+        query_conditions.append({"_id": ObjectId(tenant_id)})
+
+    result = await admin_users_collection.update_one(
+        {"$or": query_conditions, "role": "business_owner"},
+        {"$set": {
+            "daily_message_limit": payload.daily_message_limit,
+            "monthly_message_limit": payload.monthly_message_limit,
+        }}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return {
+        "status": "ok",
+        "tenant_id": tenant_id,
+        "daily_message_limit": payload.daily_message_limit,
+        "monthly_message_limit": payload.monthly_message_limit,
+    }
+
+
 # ---------------------------- Chat endpoint ----------------------------
 # tenant_id is resolved from the X-API-Key header, not sent by the widget -
 # and get_tenant_from_api_key rejects the call outright if that business
@@ -593,6 +640,52 @@ def _sse(payload: dict) -> str:
     tool - show a "looking that up..." indicator), "done" (final text,
     stream is over), or "error" (stream is over, something failed)."""
     return f"data: {json.dumps(payload)}\n\n"
+
+
+async def record_daily_usage(
+    tenant_id: str,
+    messages: int = 1,
+    tool_calls: int = 0,
+    user_text: str = "",
+    bot_text: str = "",
+    input_tokens: "Optional[int]" = None,
+    output_tokens: "Optional[int]" = None,
+    is_fallback: bool = False,
+):
+    """Atomically increments daily usage counters for a tenant. Non-blocking & multi-process safe."""
+    try:
+        today_ist = get_current_ist_date()
+        estimated = False
+        if input_tokens is None:
+            input_tokens = max(1, len(user_text) // 4)
+            estimated = True
+        if output_tokens is None:
+            output_tokens = max(1, len(bot_text) // 4)
+            estimated = True
+
+        update_doc = {
+            "$inc": {
+                "messages": messages,
+                "tool_calls": tool_calls,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "fallback_count": 1 if is_fallback else 0,
+            },
+            "$setOnInsert": {
+                "tenant_id": tenant_id,
+                "date": today_ist,
+            },
+        }
+        if estimated:
+            update_doc["$set"] = {"estimated_tokens": True}
+
+        await usage_daily_collection.update_one(
+            {"tenant_id": tenant_id, "date": today_ist},
+            update_doc,
+            upsert=True,
+        )
+    except Exception as e:
+        logger.error(f"Failed to record daily usage for tenant {tenant_id}: {e}")
 
 
 @app.post("/chat")
@@ -649,6 +742,37 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
     owner_user = await admin_users_collection.find_one({"tenant_id": tenant_id, "role": "business_owner"})
     bot_config = (owner_user.get("bot_config") if owner_user else None) or {}
 
+    # T7: Quota enforcement check BEFORE opening SSE stream
+    today_ist = get_current_ist_date()
+    daily_limit = owner_user.get("daily_message_limit") if owner_user else None
+    monthly_limit = owner_user.get("monthly_message_limit") if owner_user else None
+
+    if daily_limit is not None or monthly_limit is not None:
+        usage_doc = await usage_daily_collection.find_one({"tenant_id": tenant_id, "date": today_ist})
+        today_messages = (usage_doc.get("messages", 0)) if usage_doc else 0
+
+        if daily_limit is not None and today_messages >= daily_limit:
+            logger.warning(f"Tenant {tenant_id} exceeded daily message limit ({today_messages}/{daily_limit})")
+            raise HTTPException(
+                status_code=429,
+                detail="QUOTA_EXCEEDED: Daily message limit reached for this assistant. Please try again tomorrow or contact support.",
+            )
+
+        if monthly_limit is not None:
+            current_month_prefix = today_ist[:7]
+            cursor = usage_daily_collection.aggregate([
+                {"$match": {"tenant_id": tenant_id, "date": {"$regex": f"^{current_month_prefix}"}}},
+                {"$group": {"_id": None, "total": {"$sum": "$messages"}}}
+            ])
+            month_res = await cursor.to_list(length=1)
+            month_messages = month_res[0]["total"] if month_res else 0
+            if month_messages >= monthly_limit:
+                logger.warning(f"Tenant {tenant_id} exceeded monthly message limit ({month_messages}/{monthly_limit})")
+                raise HTTPException(
+                    status_code=429,
+                    detail="QUOTA_EXCEEDED: Monthly message limit reached for this assistant. Please contact support.",
+                )
+
     async def event_stream():
         try:
             gen = run_orchestrated_chat_turn_stream(tenant_id, conversation, bot_config=bot_config)
@@ -702,6 +826,20 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
                                 reason=unanswered_reason,
                             )
                         )
+
+                    # T7: Record daily usage asynchronously & non-blocking
+                    asyncio.create_task(
+                        record_daily_usage(
+                            tenant_id=tenant_id,
+                            messages=1,
+                            tool_calls=event.get("tools_called_count", 0),
+                            user_text=req.message,
+                            bot_text=event.get("text", ""),
+                            input_tokens=event.get("input_tokens"),
+                            output_tokens=event.get("output_tokens"),
+                            is_fallback=bool(event.get("is_fallback")),
+                        )
+                    )
 
                     yield _sse({"type": "done", "text": event["text"], "message_id": message_id})
                     return
@@ -871,6 +1009,76 @@ async def update_unanswered_status(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Item not found")
     return {"id": item_id, "status": payload.status}
+
+
+# ---------------------------- Usage tracking endpoints (T7) ----------------------------
+@app.get("/api/admin/usage")
+@app.get("/admin/usage")
+async def get_tenant_usage(
+    from_date: Optional[str] = Query(None, alias="from", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    to_date: Optional[str] = Query(None, alias="to", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    tenant_id: str = Depends(get_current_business_owner),
+):
+    """Returns daily usage records and aggregate totals for the authenticated tenant."""
+    query = {"tenant_id": tenant_id}
+    date_filter = {}
+    if from_date:
+        date_filter["$gte"] = from_date
+    if to_date:
+        date_filter["$lte"] = to_date
+    if date_filter:
+        query["date"] = date_filter
+
+    cursor = usage_daily_collection.find(query).sort("date", 1)
+    records = []
+    total_messages = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_tool_calls = 0
+    total_fallbacks = 0
+
+    async for doc in cursor:
+        msgs = doc.get("messages", 0)
+        in_tok = doc.get("input_tokens", 0)
+        out_tok = doc.get("output_tokens", 0)
+        t_calls = doc.get("tool_calls", 0)
+        fb = doc.get("fallback_count", 0)
+
+        total_messages += msgs
+        total_input_tokens += in_tok
+        total_output_tokens += out_tok
+        total_tool_calls += t_calls
+        total_fallbacks += fb
+
+        records.append({
+            "date": doc["date"],
+            "messages": msgs,
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "tool_calls": t_calls,
+            "fallback_count": fb,
+            "estimated_tokens": doc.get("estimated_tokens", False),
+        })
+
+    owner = await admin_users_collection.find_one({"tenant_id": tenant_id, "role": "business_owner"})
+    limits = {
+        "daily_message_limit": owner.get("daily_message_limit") if owner else None,
+        "monthly_message_limit": owner.get("monthly_message_limit") if owner else None,
+    }
+
+    return {
+        "tenant_id": tenant_id,
+        "records": records,
+        "limits": limits,
+        "summary": {
+            "total_messages": total_messages,
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "total_tokens": total_input_tokens + total_output_tokens,
+            "total_tool_calls": total_tool_calls,
+            "total_fallbacks": total_fallbacks,
+        }
+    }
 
 
 # ------------------------ Per-tenant bot customization (T4) ------------------------

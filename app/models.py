@@ -65,6 +65,12 @@ class UnansweredStatusUpdateModel(BaseModel):
     status: str = Field(..., pattern="^(open|resolved|ignored)$")
 
 
+class TenantLimitsModel(BaseModel):
+    """Quotas / rate limits for a tenant to protect server costs and prevent abuse."""
+    daily_message_limit: Optional[int] = Field(None, ge=1, le=1000000, description="Max messages per day (null for unlimited)")
+    monthly_message_limit: Optional[int] = Field(None, ge=1, le=10000000, description="Max messages per month (null for unlimited)")
+
+
 HEX_COLOR_PATTERN = r"^#(?:[0-9a-fA-F]{3}){1,2}$"
 
 class BotConfigModel(BaseModel):

@@ -54,3 +54,9 @@ feedback_collection = db["feedback"]
 
 # T2: Unanswered questions collection - tracks queries the bot could not answer
 unanswered_collection = db["unanswered_questions"]
+
+# T7: Usage daily tracking - records daily messages, tokens, and tool calls per tenant
+usage_daily_collection = db["usage_daily"]
+
+# T9: Leads collection - captures visitor contact details / handoffs
+leads_collection = db["leads"]

@@ -45,6 +45,8 @@ export const api = {
     request(`/superadmin/business-owners/${id}/activate`, { method: "POST", token }),
   deactivateOwner: (token, id) =>
     request(`/superadmin/business-owners/${id}/deactivate`, { method: "POST", token }),
+  updateTenantLimits: (token, tenantId, limits) =>
+    request(`/superadmin/tenants/${tenantId}/limits`, { method: "PUT", body: limits, token }),
 
   // Business owner - tools
   listTools: (token) => request("/admin/tools", { token }),
@@ -82,6 +84,15 @@ export const api = {
     request(`/admin/unanswered?status=${status}&page=${page}&limit=${limit}`, { token }),
   updateUnansweredStatus: (token, id, status) =>
     request(`/admin/unanswered/${id}`, { method: "PATCH", body: { status }, token }),
+
+  // Business owner - usage (T7)
+  getUsage: (token, { from = null, to = null } = {}) => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    const q = params.toString() ? `?${params.toString()}` : "";
+    return request(`/admin/usage${q}`, { token });
+  },
 };
 
 export { ApiError, API_BASE };

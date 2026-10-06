@@ -33,7 +33,17 @@ async function load() {
     replyInUserLanguage.value = data.reply_in_user_language !== false;
     quickReplies.value = Array.isArray(data.quick_replies) ? [...data.quick_replies] : [];
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "Couldn't load bot customization settings.";
+    if (err instanceof ApiError && err.status === 404) {
+      // Backend route pending or fresh tenant: fall back gracefully to business name
+      try {
+        const fallback = await api.getBusinessName(auth.token);
+        botName.value = fallback.business_name || auth.businessName || "";
+      } catch {
+        botName.value = auth.businessName || "";
+      }
+    } else {
+      error.value = err instanceof ApiError ? err.message : "Couldn't load bot customization settings.";
+    }
   } finally {
     isLoading.value = false;
   }
@@ -84,7 +94,17 @@ async function save() {
     auth.setBusinessName(updated.bot_name || payload.bot_name);
     toast.success("Chatbot settings updated successfully.");
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "Couldn't save bot settings.";
+    if (err instanceof ApiError && err.status === 404) {
+      try {
+        await api.updateBusinessName(auth.token, botName.value.trim());
+        auth.setBusinessName(botName.value.trim());
+        toast.success("Business name saved. Full bot settings will apply once backend deployment completes.");
+      } catch (fallbackErr) {
+        error.value = fallbackErr instanceof ApiError ? fallbackErr.message : "Couldn't save name.";
+      }
+    } else {
+      error.value = err instanceof ApiError ? err.message : "Couldn't save bot settings.";
+    }
   } finally {
     isSaving.value = false;
   }

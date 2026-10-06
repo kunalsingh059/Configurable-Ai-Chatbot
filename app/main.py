@@ -883,6 +883,7 @@ async def widget_config(tenant_id: str = Depends(get_tenant_from_api_key)):
 
 
 @app.get("/admin/bot-config")
+@app.get("/api/admin/bot-config")
 async def get_bot_config(tenant_id: str = Depends(get_current_business_owner)):
     """Returns current bot customization settings for the logged in business owner."""
     user = await admin_users_collection.find_one({"tenant_id": tenant_id, "role": "business_owner"})
@@ -902,7 +903,9 @@ async def get_bot_config(tenant_id: str = Depends(get_current_business_owner)):
 
 
 @app.put("/admin/bot-config")
+@app.put("/api/admin/bot-config")
 @app.patch("/admin/bot-config")
+@app.patch("/api/admin/bot-config")
 async def update_bot_config(payload: BotConfigModel, tenant_id: str = Depends(get_current_business_owner)):
     """Updates appearance, tone, and personality settings for the business's chatbot."""
     user = await admin_users_collection.find_one({"tenant_id": tenant_id, "role": "business_owner"})

@@ -16,12 +16,20 @@ export function useBusinessConfig() {
     async (key) => {
       if (!key) return;
       try {
-        const res = await fetch(`${API_BASE}/widget/config`, {
+        let res = await fetch(`${API_BASE}/widget/config`, {
           headers: {
             "X-API-Key": key,
             ...(parentOrigin.value ? { "X-Embed-Origin": parentOrigin.value } : {}),
           },
         });
+        if (!res.ok && res.status === 404) {
+          res = await fetch(`${API_BASE}/api/widget-config`, {
+            headers: {
+              "X-API-Key": key,
+              ...(parentOrigin.value ? { "X-Embed-Origin": parentOrigin.value } : {}),
+            },
+          });
+        }
         if (res.ok) {
           const data = await res.json();
           businessName.value = data.bot_name || data.business_name || "Support Assistant";

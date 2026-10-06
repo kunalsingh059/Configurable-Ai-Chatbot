@@ -55,7 +55,7 @@ class FeedbackModel(BaseModel):
     """User rating (up/down) and optional comment for a specific chatbot response."""
     session_id: str = Field(..., min_length=1, max_length=200)
     message_id: str = Field(..., min_length=1, max_length=200)
-    rating: str = Field(..., pattern="^(up|down)$")
+    rating: str = Field(..., pattern="^(up|down|none)$")
     comment: Optional[str] = Field(None, max_length=500)
     user_question: Optional[str] = Field(None, max_length=1000)
     bot_answer: Optional[str] = Field(None, max_length=5000)

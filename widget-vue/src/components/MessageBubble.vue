@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 
@@ -15,7 +15,9 @@ const props = defineProps({
 const emit = defineEmits(["rate"]);
 
 const copied = ref(false);
-const showFeedbackThanks = ref(false);
+const feedbackToast = ref(null);
+const isFeedbackMenuOpen = ref(false);
+const feedbackContainerRef = ref(null);
 
 const renderedHtml = computed(() => {
   if (props.role !== "assistant") return null;
@@ -49,13 +51,40 @@ async function copyText() {
   }
 }
 
-function handleRate(newRating) {
-  emit("rate", newRating);
-  showFeedbackThanks.value = true;
+function toggleFeedbackMenu() {
+  isFeedbackMenuOpen.value = !isFeedbackMenuOpen.value;
+}
+
+function selectRating(target) {
+  if (props.rating === target) {
+    // User clicked the active rating again -> toggle back to nothing (remove feedback)
+    emit("rate", null);
+    feedbackToast.value = "Feedback removed";
+  } else {
+    emit("rate", target);
+    feedbackToast.value = target === "up" ? "Marked as helpful" : "Marked as unhelpful";
+  }
+  isFeedbackMenuOpen.value = false;
   setTimeout(() => {
-    showFeedbackThanks.value = false;
+    feedbackToast.value = null;
   }, 2200);
 }
+
+function handleDocumentClick(e) {
+  if (!isFeedbackMenuOpen.value) return;
+  if (feedbackContainerRef.value && feedbackContainerRef.value.contains(e.target)) {
+    return;
+  }
+  isFeedbackMenuOpen.value = false;
+}
+
+onMounted(() => {
+  document.addEventListener("click", handleDocumentClick);
+});
+
+onUnmounted(() => {
+  document.removeEventListener("click", handleDocumentClick);
+});
 </script>
 
 <template>
@@ -89,10 +118,10 @@ function handleRate(newRating) {
         <template v-else>{{ content }}</template>
       </div>
 
-      <!-- Action bar (Copy + Thumbs Up + Thumbs Down) for assistant replies -->
+      <!-- ChatGPT-style Action bar (Copy + Combined Like/Dislike Button) -->
       <div
         v-if="role === 'assistant' && !isStreaming && content"
-        class="mt-1 flex items-center gap-1 select-none pl-1 text-slate-400"
+        class="relative mt-1 flex items-center gap-1 select-none pl-1 text-slate-400"
       >
         <!-- Copy Button (Icon only) -->
         <button
@@ -130,55 +159,128 @@ function handleRate(newRating) {
           </svg>
         </button>
 
-        <!-- Thumbs Up -->
-        <button
-          type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-200/60 hover:text-slate-700 active:scale-90"
-          :class="rating === 'up' ? '!text-emerald-600 !bg-emerald-50' : ''"
-          :title="rating === 'up' ? 'Helpful' : 'Mark as helpful'"
-          aria-label="Thumbs up"
-          @click="handleRate('up')"
-        >
-          <svg
-            class="h-4 w-4 transition-transform"
-            :class="rating === 'up' ? 'scale-110 !text-emerald-600' : ''"
-            viewBox="0 0 24 24"
-            :fill="rating === 'up' ? 'currentColor' : 'none'"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+        <!-- ChatGPT Dual-Thumb Feedback Button with Popover Menu -->
+        <div ref="feedbackContainerRef" class="relative">
+          <button
+            type="button"
+            class="flex h-7 w-7 items-center justify-center rounded-lg transition active:scale-90"
+            :class="[
+              rating === 'up'
+                ? '!text-emerald-600 !bg-emerald-50'
+                : rating === 'down'
+                ? '!text-rose-600 !bg-rose-50'
+                : isFeedbackMenuOpen
+                ? 'bg-slate-200/70 text-slate-700'
+                : 'text-slate-400 hover:bg-slate-200/60 hover:text-slate-700'
+            ]"
+            :title="rating ? 'Click to change or remove feedback' : 'Provide feedback'"
+            aria-label="Feedback"
+            @click="toggleFeedbackMenu"
           >
-            <path d="M7 10v12" />
-            <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3" />
-          </svg>
-        </button>
+            <!-- Active Thumbs Up Icon -->
+            <svg
+              v-if="rating === 'up'"
+              class="h-4 w-4 text-emerald-600 scale-105"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M7 10v12" />
+              <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3" />
+            </svg>
 
-        <!-- Thumbs Down -->
-        <button
-          type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-200/60 hover:text-slate-700 active:scale-90"
-          :class="rating === 'down' ? '!text-rose-600 !bg-rose-50' : ''"
-          :title="rating === 'down' ? 'Not helpful' : 'Mark as not helpful'"
-          aria-label="Thumbs down"
-          @click="handleRate('down')"
-        >
-          <svg
-            class="h-4 w-4 transition-transform"
-            :class="rating === 'down' ? 'scale-110 !text-rose-600' : ''"
-            viewBox="0 0 24 24"
-            :fill="rating === 'down' ? 'currentColor' : 'none'"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+            <!-- Active Thumbs Down Icon -->
+            <svg
+              v-else-if="rating === 'down'"
+              class="h-4 w-4 text-rose-600 scale-105"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M17 14V2" />
+              <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-3" />
+            </svg>
+
+            <!-- Neutral ChatGPT Combined Dual-Thumb Icon -->
+            <svg
+              v-else
+              class="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <g transform="translate(-1, -1) scale(0.68)">
+                <path d="M7 10v12" />
+                <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3" />
+              </g>
+              <g transform="translate(8, 7.5) scale(0.68)">
+                <path d="M17 14V2" />
+                <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-3" />
+              </g>
+            </svg>
+          </button>
+
+          <!-- ChatGPT Popover Menu -->
+          <div
+            v-if="isFeedbackMenuOpen"
+            class="absolute bottom-full mb-1.5 left-0 z-40 min-w-[145px] rounded-xl bg-slate-900/95 p-1 text-white shadow-xl ring-1 ring-white/10 backdrop-blur-xs animate-in fade-in zoom-in-95"
           >
-            <path d="M17 14V2" />
-            <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-3" />
-          </svg>
-        </button>
+            <button
+              type="button"
+              class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition hover:bg-white/10 active:scale-95"
+              :class="rating === 'up' ? '!text-emerald-400 bg-white/5' : 'text-slate-200'"
+              @click="selectRating('up')"
+            >
+              <svg
+                class="h-4 w-4 shrink-0"
+                viewBox="0 0 24 24"
+                :fill="rating === 'up' ? 'currentColor' : 'none'"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M7 10v12" />
+                <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h3" />
+              </svg>
+              <span>Good response</span>
+              <span v-if="rating === 'up'" class="ml-auto text-[10px] text-emerald-400">✓</span>
+            </button>
 
-        <!-- Subtle Feedback / Copied Pill -->
+            <button
+              type="button"
+              class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition hover:bg-white/10 active:scale-95"
+              :class="rating === 'down' ? '!text-rose-400 bg-white/5' : 'text-slate-200'"
+              @click="selectRating('down')"
+            >
+              <svg
+                class="h-4 w-4 shrink-0"
+                viewBox="0 0 24 24"
+                :fill="rating === 'down' ? 'currentColor' : 'none'"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M17 14V2" />
+                <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-3" />
+              </svg>
+              <span>Bad response</span>
+              <span v-if="rating === 'down'" class="ml-auto text-[10px] text-rose-400">✓</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Feedback Confirmation Toast -->
         <span
           v-if="copied"
           class="ml-1 text-[11px] font-medium text-emerald-600 animate-in fade-in"
@@ -186,10 +288,11 @@ function handleRate(newRating) {
           Copied
         </span>
         <span
-          v-else-if="showFeedbackThanks"
-          class="ml-1 text-[11px] font-medium text-slate-500 animate-in fade-in"
+          v-else-if="feedbackToast"
+          class="ml-1 text-[11px] font-medium animate-in fade-in"
+          :class="feedbackToast === 'Feedback removed' ? 'text-slate-500' : 'text-emerald-600'"
         >
-          Thanks!
+          {{ feedbackToast }}
         </span>
       </div>
     </div>

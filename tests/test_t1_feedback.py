@@ -78,8 +78,40 @@ class TestFeedback(unittest.TestCase):
                 self.assertEqual(db_doc_updated["rating"], "down")
                 self.assertEqual(db_doc_updated["comment"], "Needs more detail")
 
-                # Clean up
-                await feedback_collection.delete_one({"tenant_id": tenant_id, "message_id": msg_id})
+                # 5. Cancel / Remove feedback by sending rating: "none"
+                r_remove = await client.post(
+                    "/api/feedback",
+                    headers={"X-API-Key": api_key},
+                    json={
+                        "session_id": "test-session-1",
+                        "message_id": msg_id,
+                        "rating": "none"
+                    }
+                )
+                self.assertEqual(r_remove.status_code, 200)
+                self.assertEqual(r_remove.json()["status"], "removed")
+                removed_doc = await feedback_collection.find_one({"tenant_id": tenant_id, "message_id": msg_id})
+                self.assertIsNone(removed_doc, "Document should be deleted from DB when rating is 'none'")
+
+                # 6. Delete endpoint directly
+                # First re-insert
+                await client.post(
+                    "/api/feedback",
+                    headers={"X-API-Key": api_key},
+                    json={
+                        "session_id": "test-session-1",
+                        "message_id": msg_id,
+                        "rating": "up"
+                    }
+                )
+                r_delete = await client.delete(
+                    f"/api/feedback/{msg_id}",
+                    headers={"X-API-Key": api_key}
+                )
+                self.assertEqual(r_delete.status_code, 200)
+                self.assertEqual(r_delete.json()["status"], "removed")
+                deleted_doc = await feedback_collection.find_one({"tenant_id": tenant_id, "message_id": msg_id})
+                self.assertIsNone(deleted_doc, "Document should be deleted from DB via DELETE endpoint")
 
         asyncio.run(run_tests())
 

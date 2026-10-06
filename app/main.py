@@ -765,7 +765,11 @@ async def submit_feedback(
     tenant_id: str = Depends(get_tenant_from_api_key),
 ):
     """Stores user rating (thumbs up / down) and optional comment for a bot answer.
-    Guarantees one rating per message_id via atomic upsert. Tenant-isolated."""
+    If rating is 'none', removes the feedback record completely. Tenant-isolated."""
+    if payload.rating == "none":
+        await feedback_collection.delete_one({"tenant_id": tenant_id, "message_id": payload.message_id})
+        return {"status": "removed", "message_id": payload.message_id, "rating": None}
+
     now = datetime.now(timezone.utc)
     doc = {
         "tenant_id": tenant_id,
@@ -786,6 +790,17 @@ async def submit_feedback(
         upsert=True,
     )
     return {"status": "ok", "message_id": payload.message_id, "rating": payload.rating}
+
+
+@app.delete("/api/feedback/{message_id}")
+@app.delete("/feedback/{message_id}")
+async def delete_feedback(
+    message_id: str,
+    tenant_id: str = Depends(get_tenant_from_api_key),
+):
+    """Allows user to remove their feedback completely for a message."""
+    await feedback_collection.delete_one({"tenant_id": tenant_id, "message_id": message_id})
+    return {"status": "removed", "message_id": message_id}
 
 
 async def log_unanswered_question(tenant_id: str, question: str, session_id: str, reason: str):

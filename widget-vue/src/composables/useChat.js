@@ -196,7 +196,7 @@ export function useChat(businessNameRef) {
         body: JSON.stringify({
           session_id: sessionId,
           message_id: messageId,
-          rating,
+          rating: rating || "none",
           comment,
           user_question: userQuestion,
           bot_answer: botAnswer,

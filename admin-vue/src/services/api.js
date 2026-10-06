@@ -93,6 +93,10 @@ export const api = {
     const q = params.toString() ? `?${params.toString()}` : "";
     return request(`/admin/usage${q}`, { token });
   },
+
+  // Business owner - analytics (T8)
+  getAnalytics: (token, range = "7d") =>
+    request(`/api/admin/analytics?range=${encodeURIComponent(range)}`, { token }),
 };
 
 export { ApiError, API_BASE };

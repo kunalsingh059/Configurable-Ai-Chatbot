@@ -307,14 +307,16 @@ async def ensure_indexes():
         # businesses accumulate real data.
         await tools_collection.create_index("tenant_id")
         await documents_collection.create_index("tenant_id")
-        # Feedback indexes: one rating per message per tenant, plus fast date sorting
+        # Feedback indexes: one rating per message per tenant, plus fast date sorting (T1, T8)
         await feedback_collection.create_index(
             [("tenant_id", 1), ("message_id", 1)], unique=True
         )
         await feedback_collection.create_index([("tenant_id", 1), ("created_at", -1)])
-        # Unanswered questions indexes: query by status, date sorting
+        await feedback_collection.create_index([("tenant_id", 1), ("created_at", 1)])
+        # Unanswered questions indexes: query by status, date sorting (T2, T8)
         await unanswered_collection.create_index([("tenant_id", 1), ("status", 1), ("timestamp", -1)])
         await unanswered_collection.create_index([("tenant_id", 1), ("created_at", -1)], sparse=True)
+        await unanswered_collection.create_index([("tenant_id", 1), ("created_at", 1)], sparse=True)
         # Usage daily indexes: compound unique (tenant_id, date) and date sorting (T7, T8)
         await usage_daily_collection.create_index(
             [("tenant_id", 1), ("date", 1)], unique=True
@@ -644,6 +646,7 @@ def _sse(payload: dict) -> str:
 
 async def record_daily_usage(
     tenant_id: str,
+    session_id: str = "",
     messages: int = 1,
     tool_calls: int = 0,
     user_text: str = "",
@@ -663,14 +666,30 @@ async def record_daily_usage(
             output_tokens = max(1, len(bot_text) // 4)
             estimated = True
 
+        is_new_session = False
+        if session_id:
+            try:
+                r = get_redis()
+                daily_sessions_key = f"daily_sessions:{tenant_id}:{today_ist}"
+                added = await r.sadd(daily_sessions_key, session_id)
+                if added == 1:
+                    await r.expire(daily_sessions_key, 86400 * 3)
+                    is_new_session = True
+            except Exception:
+                pass
+
+        inc_fields = {
+            "messages": messages,
+            "tool_calls": tool_calls,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "fallback_count": 1 if is_fallback else 0,
+        }
+        if is_new_session:
+            inc_fields["sessions"] = 1
+
         update_doc = {
-            "$inc": {
-                "messages": messages,
-                "tool_calls": tool_calls,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "fallback_count": 1 if is_fallback else 0,
-            },
+            "$inc": inc_fields,
             "$setOnInsert": {
                 "tenant_id": tenant_id,
                 "date": today_ist,
@@ -827,10 +846,11 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
                             )
                         )
 
-                    # T7: Record daily usage asynchronously & non-blocking
+                    # T7/T8: Record daily usage asynchronously & non-blocking
                     asyncio.create_task(
                         record_daily_usage(
                             tenant_id=tenant_id,
+                            session_id=req.session_id,
                             messages=1,
                             tool_calls=event.get("tools_called_count", 0),
                             user_text=req.message,
@@ -944,12 +964,13 @@ async def delete_feedback(
 async def log_unanswered_question(tenant_id: str, question: str, session_id: str, reason: str):
     """Asynchronously logs questions the bot could not answer. Non-blocking."""
     try:
+        now = datetime.now(timezone.utc)
         await unanswered_collection.insert_one({
             "tenant_id": tenant_id,
             "question": question.strip(),
             "session_id": session_id,
-            "timestamp": datetime.now(timezone.utc),
-            "reason": reason,
+            "timestamp": now,
+            "created_at": now,
             "status": "open",
         })
     except Exception as e:
@@ -1078,6 +1099,99 @@ async def get_tenant_usage(
             "total_tool_calls": total_tool_calls,
             "total_fallbacks": total_fallbacks,
         }
+    }
+
+
+# ---------------------------- Basic Analytics Dashboard (T8) ----------------------------
+@app.get("/api/admin/analytics")
+@app.get("/admin/analytics")
+async def get_tenant_analytics(
+    time_range: str = Query("7d", alias="range", pattern=r"^(7d|30d)$"),
+    tenant_id: str = Depends(get_current_business_owner),
+):
+    """
+    Returns high-level analytics for the business owner:
+    - Tiles: Conversations (distinct sessions), Messages, Satisfaction %, Unanswered (open count)
+    - Trends/Daily series read strictly from usage_daily_collection (not ephemeral 24h sessions)
+    """
+    days = 30 if time_range == "30d" else 7
+    today_dt = datetime.now(IST)
+    today_date = today_dt.date()
+
+    date_keys = [
+        (today_date - timedelta(days=i)).strftime("%Y-%m-%d")
+        for i in range(days - 1, -1, -1)
+    ]
+    start_date = date_keys[0]
+    end_date = date_keys[-1]
+
+    # Query usage_daily_collection for message and session counts
+    cursor = usage_daily_collection.find({
+        "tenant_id": tenant_id,
+        "date": {"$gte": start_date, "$lte": end_date},
+    }).sort("date", 1)
+
+    usage_by_date = {}
+    async for doc in cursor:
+        usage_by_date[doc["date"]] = doc
+
+    daily_series = []
+    total_messages = 0
+    total_conversations = 0
+
+    for d_str in date_keys:
+        doc = usage_by_date.get(d_str, {})
+        msgs = doc.get("messages", 0)
+        convs = doc.get("sessions", doc.get("session_count", 0))
+        if convs == 0 and msgs > 0:
+            convs = 1
+        total_messages += msgs
+        total_conversations += convs
+        daily_series.append({
+            "date": d_str,
+            "messages": msgs,
+            "conversations": convs,
+        })
+
+    # Range UTC boundary for feedback
+    start_time_utc = datetime.combine(
+        today_date - timedelta(days=days - 1), datetime.min.time()
+    ).replace(tzinfo=IST).astimezone(timezone.utc)
+
+    # Thumbs up / down from feedback_collection
+    up_count = await feedback_collection.count_documents({
+        "tenant_id": tenant_id,
+        "rating": "up",
+        "created_at": {"$gte": start_time_utc},
+    })
+    down_count = await feedback_collection.count_documents({
+        "tenant_id": tenant_id,
+        "rating": "down",
+        "created_at": {"$gte": start_time_utc},
+    })
+    total_feedback = up_count + down_count
+    satisfaction_pct = (
+        round((up_count / total_feedback) * 100, 1) if total_feedback > 0 else None
+    )
+
+    # Unanswered questions metrics
+    unanswered_open = await unanswered_collection.count_documents({
+        "tenant_id": tenant_id,
+        "status": "open",
+    })
+
+    return {
+        "tenant_id": tenant_id,
+        "range": time_range,
+        "tiles": {
+            "conversations": total_conversations,
+            "messages": total_messages,
+            "satisfaction_pct": satisfaction_pct,
+            "thumbs_up": up_count,
+            "thumbs_down": down_count,
+            "unanswered_open": unanswered_open,
+        },
+        "daily_series": daily_series,
     }
 
 

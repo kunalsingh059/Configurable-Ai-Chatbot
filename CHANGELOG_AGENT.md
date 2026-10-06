@@ -134,3 +134,23 @@ This document tracks all changes, architecture decisions, new collections/indexe
   - Atomic `$inc` MongoDB operator guarantees zero lost updates under concurrent chat traffic.
   - Usage tracking runs asynchronously in turn completion background task (0ms impact on TTFT).
 
+---
+
+### Task T8: Basic Analytics Dashboard
+- **Status:** Complete
+- **Files Modified:**
+  - `app/main.py`:
+    - Added compound indexes: `(tenant_id, created_at)` on `feedback_collection` and `unanswered_collection`, and `(tenant_id, date)` on `usage_daily_collection`.
+    - Updated `record_daily_usage()` to track daily distinct sessions using Redis `SADD` with 3-day TTL and atomic increment of `sessions` in `usage_daily_collection`.
+    - Added `created_at` field to `log_unanswered_question()`.
+    - Implemented `GET /api/admin/analytics?range=7d|30d` (and `/admin/analytics`). Trends and message counts read strictly from `usage_daily_collection` (persisting long-term beyond 24h session TTL). Computes KPI tiles: "Conversations" (distinct sessions), "Messages", "Satisfaction %" (plus thumbs up / down counts), and "Unanswered" (open count), alongside a continuous IST daily series.
+  - `admin-vue/src/services/api.js`: Added `getAnalytics(token, range)` API call.
+  - `admin-vue/src/components/AnalyticsOverview.vue`: Created responsive Vue component with 7-day / 30-day range toggle, loading skeleton, live refresh button, 4 KPI cards ("Conversations", "Messages", "Satisfaction", "Unanswered"), and responsive CSS bar chart displaying daily volume trends with zero external dependencies.
+  - `admin-vue/src/views/BusinessOwnerDashboard.vue`: Mounted `AnalyticsOverview` prominently at the top of the business owner dashboard cards.
+  - `tests/test_t8_analytics.py`: Automated tests verifying multi-tenant isolation, 401 unauthenticated guard, exact tile metrics computation, and continuous 7d and 30d time-series outputs.
+- **Database Collections & Indexes:**
+  - `feedback`: `[("tenant_id", 1), ("created_at", 1)]`, `[("tenant_id", 1), ("created_at", -1)]`
+  - `unanswered_questions`: `[("tenant_id", 1), ("created_at", 1)]`, `[("tenant_id", 1), ("created_at", -1)]`
+  - `usage_daily`: `[("tenant_id", 1), ("date", 1)]`, `[("tenant_id", 1), ("date", -1)]`
+
+

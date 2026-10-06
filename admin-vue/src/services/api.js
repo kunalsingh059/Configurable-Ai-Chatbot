@@ -97,6 +97,19 @@ export const api = {
   // Business owner - analytics (T8)
   getAnalytics: (token, range = "7d") =>
     request(`/api/admin/analytics?range=${encodeURIComponent(range)}`, { token }),
+
+  // Business owner - human handoff & leads (T9)
+  listLeads: (token, { status = "all", page = 1, limit = 20 } = {}) =>
+    request(`/api/admin/leads?status=${status}&page=${page}&limit=${limit}`, { token }),
+  updateLeadStatus: (token, leadId, status) =>
+    request(`/api/admin/leads/${leadId}`, { method: "PATCH", body: { status }, token }),
+  exportLeadsCsv: async (token) => {
+    const res = await fetch(`${API_BASE}/api/admin/leads/export.csv`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new ApiError(res.status, "Failed to download leads CSV");
+    return res.blob();
+  },
 };
 
 export { ApiError, API_BASE };

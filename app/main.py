@@ -5,12 +5,14 @@ from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
 import os
+import io
+import csv
 import time
 import json
 import secrets
@@ -38,12 +40,13 @@ def get_current_ist_date() -> str:
 
 from app.db import (
     client, tools_collection, documents_collection, admin_users_collection,
-    feedback_collection, unanswered_collection, usage_daily_collection,
+    feedback_collection, unanswered_collection, usage_daily_collection, leads_collection,
 )
 from app.models import (
     ToolModel, ToolTestModel, DocumentModel, RegisterModel, LoginModel,
     BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, AllowedDomainsModel,
     FeedbackModel, UnansweredStatusUpdateModel, BotConfigModel, TenantLimitsModel,
+    HandoffRequestModel, LeadStatusUpdateModel,
     derive_business_name, serialize_tool, serialize_document,
 )
 from app.dynamic_tools import get_tenant_tools, execute_tool, format_tool_result_for_llm
@@ -53,7 +56,7 @@ from app.groq_client import run_groq_chat_turn_stream
 from app.llm_orchestrator import run_orchestrated_chat_turn_stream
 from app.documents import extract_text, get_tenant_documents, ingest_document_chunks, delete_document_chunks
 from app.embeddings import warm_up as warm_up_embeddings
-from app.email_service import send_password_reset_email
+from app.email_service import send_password_reset_email, send_lead_notification_email
 from app.rate_limit import check_rate_limit, get_client_ip
 from app.redis_client import get_redis, ping as redis_ping
 from redis.exceptions import RedisError
@@ -322,6 +325,9 @@ async def ensure_indexes():
             [("tenant_id", 1), ("date", 1)], unique=True
         )
         await usage_daily_collection.create_index([("tenant_id", 1), ("date", -1)])
+        # Leads indexes: date sorting and status filter (T9)
+        await leads_collection.create_index([("tenant_id", 1), ("created_at", -1)])
+        await leads_collection.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)])
     except Exception as e:
         # Don't crash startup over this - most likely cause is duplicate
         # data already in the DB from before these indexes existed, which
@@ -1216,6 +1222,7 @@ async def widget_config(tenant_id: str = Depends(get_tenant_from_api_key)):
         "primary_color": bot_config.get("primary_color") or "#0b1224",
         "avatar_url": bot_config.get("avatar_url"),
         "quick_replies": bot_config.get("quick_replies") or [],
+        "handoff_enabled": bool(bot_config.get("handoff_enabled", False)),
     }
 
 
@@ -1471,6 +1478,197 @@ async def delete_document(doc_id: str, tenant_id: str = Depends(get_current_busi
     # retrieval and keep getting embedded into every prompt forever.
     await delete_document_chunks(object_id)
     return {"status": "deleted"}
+
+
+# --------------------- Human Handoff & Lead Capture (T9) ---------------------
+def _sanitize_csv_cell(val: any) -> str:
+    """Guards against CSV Formula Injection (CWE-1236)."""
+    s = str(val or "")
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return f"'{s}"
+    return s
+
+
+@app.post("/api/handoff")
+@app.post("/handoff")
+async def create_handoff_lead(
+    req: HandoffRequestModel,
+    request: Request,
+    tenant_id: str = Depends(get_tenant_from_api_key),
+):
+    """
+    Submits customer contact info / support request when human handoff is triggered.
+    - Strict per-IP rate limiting (3 requests / hour)
+    - Gated by tenant's handoff_enabled flag
+    - Stores last 10 chat messages from session
+    - Best-effort email notification to business owner
+    """
+    # 1. Gate check: tenant handoff_enabled
+    owner = await admin_users_collection.find_one({"tenant_id": tenant_id, "role": "business_owner"})
+    bot_config = (owner.get("bot_config") if owner else None) or {}
+    if not bot_config.get("handoff_enabled", False):
+        raise HTTPException(status_code=403, detail="Human handoff is currently disabled for this assistant.")
+
+    # 2. Strict per-IP rate limiting: 3 per hour (3600s)
+    client_ip = get_client_ip(request)
+    await check_rate_limit(f"handoff:{client_ip}", max_requests=3, window_seconds=3600)
+
+    # 3. Retrieve last 10 messages from session
+    session_key = f"{tenant_id}:{req.session_id}"
+    conversation = await get_session_conversation(session_key)
+    recent_history = conversation[-10:] if conversation else []
+
+    # 4. Save to leads_collection
+    now = datetime.now(timezone.utc)
+    lead_doc = {
+        "tenant_id": tenant_id,
+        "session_id": req.session_id,
+        "name": req.name.strip(),
+        "email": req.email.strip() if req.email else None,
+        "phone": req.phone.strip() if req.phone else None,
+        "message": req.message.strip() if req.message else "",
+        "chat_history": recent_history,
+        "status": "new",
+        "created_at": now,
+        "updated_at": now,
+    }
+    result = await leads_collection.insert_one(lead_doc)
+    lead_id = str(result.inserted_id)
+
+    # 5. Best-effort owner email notification (saved even if email fails)
+    if owner and owner.get("email"):
+        try:
+            send_lead_notification_email(
+                to_email=owner["email"],
+                tenant_id=tenant_id,
+                lead_name=req.name,
+                lead_email=req.email,
+                lead_phone=req.phone,
+                lead_message=req.message,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send lead email notification to {owner.get('email')}: {e}")
+
+    return {
+        "status": "ok",
+        "lead_id": lead_id,
+        "message": "Thank you! We have received your information and will be in touch shortly.",
+    }
+
+
+@app.get("/api/admin/leads")
+@app.get("/admin/leads")
+async def list_admin_leads(
+    status: Optional[str] = Query("all", pattern=r"^(all|new|contacted|closed)$"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    tenant_id: str = Depends(get_current_business_owner),
+):
+    """Lists captured customer leads for the authenticated business owner."""
+    query = {"tenant_id": tenant_id}
+    if status and status != "all":
+        query["status"] = status
+
+    total = await leads_collection.count_documents(query)
+    new_count = await leads_collection.count_documents({"tenant_id": tenant_id, "status": "new"})
+    contacted_count = await leads_collection.count_documents({"tenant_id": tenant_id, "status": "contacted"})
+    closed_count = await leads_collection.count_documents({"tenant_id": tenant_id, "status": "closed"})
+
+    skip = (page - 1) * limit
+    cursor = leads_collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+
+    items = []
+    async for doc in cursor:
+        items.append({
+            "id": str(doc["_id"]),
+            "session_id": doc.get("session_id", ""),
+            "name": doc.get("name", ""),
+            "email": doc.get("email"),
+            "phone": doc.get("phone"),
+            "message": doc.get("message", ""),
+            "chat_history": doc.get("chat_history", []),
+            "status": doc.get("status", "new"),
+            "created_at": doc.get("created_at").isoformat() if doc.get("created_at") else None,
+            "updated_at": doc.get("updated_at").isoformat() if doc.get("updated_at") else None,
+        })
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "counts": {
+            "all": new_count + contacted_count + closed_count,
+            "new": new_count,
+            "contacted": contacted_count,
+            "closed": closed_count,
+        },
+    }
+
+
+@app.patch("/api/admin/leads/{lead_id}")
+@app.patch("/admin/leads/{lead_id}")
+async def update_lead_status(
+    lead_id: str,
+    payload: LeadStatusUpdateModel,
+    tenant_id: str = Depends(get_current_business_owner),
+):
+    """Updates the status of a customer lead (new, contacted, closed)."""
+    oid = parse_object_id(lead_id)
+    now = datetime.now(timezone.utc)
+    result = await leads_collection.update_one(
+        {"_id": oid, "tenant_id": tenant_id},
+        {"$set": {"status": payload.status, "updated_at": now}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return {"id": lead_id, "status": payload.status}
+
+
+@app.get("/api/admin/leads/export.csv")
+@app.get("/admin/leads/export.csv")
+async def export_leads_csv(tenant_id: str = Depends(get_current_business_owner)):
+    """Exports all captured leads for the tenant as a CSV file with formula-injection sanitization."""
+    cursor = leads_collection.find({"tenant_id": tenant_id}).sort("created_at", -1)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow([
+        "Lead ID",
+        "Created At (UTC)",
+        "Name",
+        "Email",
+        "Phone",
+        "Status",
+        "Message",
+        "Chat History (Last 10 msgs)",
+    ])
+
+    async for doc in cursor:
+        created_at_str = doc.get("created_at").strftime("%Y-%m-%d %H:%M:%S") if doc.get("created_at") else ""
+        history_summary = " | ".join(
+            f"{m.get('role', 'user')}: {m.get('content', '')}" for m in doc.get("chat_history", [])
+        )
+        writer.writerow([
+            _sanitize_csv_cell(str(doc["_id"])),
+            _sanitize_csv_cell(created_at_str),
+            _sanitize_csv_cell(doc.get("name", "")),
+            _sanitize_csv_cell(doc.get("email", "")),
+            _sanitize_csv_cell(doc.get("phone", "")),
+            _sanitize_csv_cell(doc.get("status", "new")),
+            _sanitize_csv_cell(doc.get("message", "")),
+            _sanitize_csv_cell(history_summary),
+        ])
+
+    csv_data = output.getvalue()
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=leads_{tenant_id}.csv",
+        },
+    )
 
 
 @app.get("/health")

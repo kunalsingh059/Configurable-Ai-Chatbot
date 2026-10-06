@@ -5,10 +5,11 @@ import MessageList from "./components/MessageList.vue";
 import ChatInput from "./components/ChatInput.vue";
 import WidgetLauncher from "./components/WidgetLauncher.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
+import ContactModal from "./components/ContactModal.vue";
 import { useChat } from "./composables/useChat";
 import { useBusinessConfig } from "./composables/useBusinessConfig";
 
-const { businessName, welcomeMessage, primaryColor, avatarUrl, quickReplies } = useBusinessConfig();
+const { businessName, welcomeMessage, primaryColor, avatarUrl, quickReplies, handoffEnabled } = useBusinessConfig();
 const {
   messages,
   isSending,
@@ -16,10 +17,22 @@ const {
   error,
   sendMessage,
   submitFeedback,
+  submitHandoff,
   hasApiKey,
   isResolved,
   resetChat,
 } = useChat(businessName);
+
+const showContactModal = ref(false);
+
+async function handleContactSubmit({ name, email, phone, message, onSuccess, onError }) {
+  try {
+    await submitHandoff({ name, email, phone, message });
+    onSuccess();
+  } catch (err) {
+    onError(err);
+  }
+}
 
 const initials = computed(() => {
   const words = (businessName.value || "").trim().split(/\s+/).filter(Boolean);
@@ -65,8 +78,10 @@ const isStandalone = window.parent === window;
         :initials="initials"
         :avatar-url="avatarUrl"
         :primary-color="primaryColor"
+        :handoff-enabled="handoffEnabled"
         @minimize="isOpen = false"
         @clear="showClearConfirm = true"
+        @contact="showContactModal = true"
       />
 
       <div
@@ -95,6 +110,13 @@ const isStandalone = window.parent === window;
         />
         <ChatInput :disabled="isSending" @send="sendMessage" />
       </template>
+
+      <ContactModal
+        :open="showContactModal"
+        :primary-color="primaryColor"
+        @close="showContactModal = false"
+        @submit="handleContactSubmit"
+      />
 
       <ConfirmDialog
         :open="showClearConfirm"

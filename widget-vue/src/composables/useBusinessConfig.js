@@ -10,6 +10,7 @@ export function useBusinessConfig() {
   const primaryColor = ref("#0b1224");
   const avatarUrl = ref(null);
   const quickReplies = ref([]);
+  const handoffEnabled = ref(false);
 
   watch(
     apiKey,
@@ -37,6 +38,7 @@ export function useBusinessConfig() {
           primaryColor.value = data.primary_color || "#0b1224";
           avatarUrl.value = data.avatar_url || null;
           quickReplies.value = Array.isArray(data.quick_replies) ? data.quick_replies : [];
+          handoffEnabled.value = Boolean(data.handoff_enabled);
         }
       } catch {
         // Silently keep default config if config fetch fails
@@ -51,5 +53,6 @@ export function useBusinessConfig() {
     primaryColor,
     avatarUrl,
     quickReplies,
+    handoffEnabled,
   };
 }

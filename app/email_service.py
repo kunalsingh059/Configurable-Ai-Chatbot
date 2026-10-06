@@ -161,3 +161,67 @@ def send_password_reset_email(to_email: str, reset_link: str) -> None:
         server.starttls()
         server.login(gmail_address, gmail_app_password)
         server.send_message(msg)
+
+
+def send_lead_notification_email(
+    to_email: str,
+    tenant_id: str,
+    lead_name: str,
+    lead_email: str = None,
+    lead_phone: str = None,
+    lead_message: str = None,
+) -> None:
+    """Best-effort notification to business owner when a new lead is captured (T9)."""
+    gmail_address = os.environ.get("GMAIL_ADDRESS")
+    gmail_app_password = os.environ.get("GMAIL_APP_PASSWORD")
+
+    if not gmail_address or not gmail_app_password:
+        raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD are not configured in .env")
+
+    contact_parts = []
+    if lead_email:
+        contact_parts.append(f"Email: {lead_email}")
+    if lead_phone:
+        contact_parts.append(f"Phone: {lead_phone}")
+    contact_str = " | ".join(contact_parts) or "No direct contact method"
+
+    text_body = (
+        f"New Contact Lead from Chatbot ({tenant_id})\n\n"
+        f"Name: {lead_name}\n"
+        f"{contact_str}\n"
+        f"Note: {lead_message or 'No additional note'}\n\n"
+        "Check your business owner dashboard to view recent chat context and respond to this lead."
+    )
+
+    html_body = f"""<!doctype html>
+<html>
+  <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; padding: 24px; margin: 0;">
+    <div style="max-width: 520px; margin: 0 auto; background: #ffffff; border-radius: 12px; padding: 28px; border: 1px solid #e2e8f0;">
+      <h2 style="color: #0b1224; font-size: 18px; margin: 0 0 8px;">New Customer Contact Lead</h2>
+      <p style="color: #64748b; font-size: 13px; line-height: 1.5; margin: 0 0 20px;">
+        A customer requested contact via your chatbot for <strong>{tenant_id}</strong>:
+      </p>
+      <div style="background: #f8fafc; border: 1px solid #edf2f7; border-radius: 8px; padding: 16px; margin: 0 0 20px; font-size: 13px; line-height: 1.6; color: #1e293b;">
+        <p style="margin: 0 0 6px;"><strong>Name:</strong> {lead_name}</p>
+        {f'<p style="margin: 0 0 6px;"><strong>Email:</strong> {lead_email}</p>' if lead_email else ''}
+        {f'<p style="margin: 0 0 6px;"><strong>Phone:</strong> {lead_phone}</p>' if lead_phone else ''}
+        {f'<p style="margin: 0;"><strong>Message:</strong> {lead_message}</p>' if lead_message else ''}
+      </div>
+      <p style="color: #94a3b8; font-size: 11px; margin: 0;">
+        Sign in to your admin dashboard to view the conversation history and update this lead.
+      </p>
+    </div>
+  </body>
+</html>"""
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"New Lead: {lead_name} ({tenant_id})"
+    msg["From"] = gmail_address
+    msg["To"] = to_email
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        server.starttls()
+        server.login(gmail_address, gmail_app_password)
+        server.send_message(msg)

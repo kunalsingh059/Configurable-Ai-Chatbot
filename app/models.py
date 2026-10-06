@@ -6,7 +6,7 @@ not as an ORM layer. Mongo documents are just Python dicts under the hood.
 
 import re
 from urllib.parse import urlparse
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 from typing import Optional
 from datetime import datetime
 
@@ -82,6 +82,7 @@ class BotConfigModel(BaseModel):
     tone: Optional[str] = Field("friendly", pattern="^(friendly|professional|casual)$")
     quick_replies: list[str] = Field(default_factory=list, max_length=6)
     reply_in_user_language: bool = True
+    handoff_enabled: bool = False
 
     @field_validator("quick_replies")
     @classmethod
@@ -104,6 +105,54 @@ class BotConfigModel(BaseModel):
         if not v.startswith("https://"):
             raise ValueError("Avatar URL must begin with https://")
         return v
+
+
+class HandoffRequestModel(BaseModel):
+    """Customer request to contact human support or leave a lead (T9)."""
+    session_id: str = Field(..., min_length=1, max_length=200)
+    name: str = Field(..., min_length=1, max_length=100)
+    email: Optional[str] = Field(None, max_length=150)
+    phone: Optional[str] = Field(None, max_length=30)
+    message: Optional[str] = Field("", max_length=1000)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Name cannot be empty")
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return None
+        v = v.strip()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("Invalid email format")
+        return v
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return None
+        v = v.strip()
+        cleaned = re.sub(r"[\s\-\(\)\+]", "", v)
+        if len(cleaned) < 5 or not cleaned.isdigit():
+            raise ValueError("Invalid phone number format")
+        return v
+
+    @model_validator(mode="after")
+    def check_contact_method(self):
+        if not self.email and not self.phone:
+            raise ValueError("Either email or phone number must be provided")
+        return self
+
+
+class LeadStatusUpdateModel(BaseModel):
+    status: str = Field(..., pattern="^(new|contacted|closed)$")
 
 
 

@@ -13,6 +13,7 @@ const primaryColor = ref("#0b1224");
 const avatarUrl = ref("");
 const tone = ref("friendly");
 const replyInUserLanguage = ref(true);
+const handoffEnabled = ref(false);
 const quickReplies = ref([]);
 const newQuickReply = ref("");
 
@@ -31,6 +32,7 @@ async function load() {
     avatarUrl.value = data.avatar_url || "";
     tone.value = data.tone || "friendly";
     replyInUserLanguage.value = data.reply_in_user_language !== false;
+    handoffEnabled.value = Boolean(data.handoff_enabled);
     quickReplies.value = Array.isArray(data.quick_replies) ? [...data.quick_replies] : [];
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
@@ -89,6 +91,7 @@ async function save() {
       tone: tone.value,
       quick_replies: quickReplies.value,
       reply_in_user_language: replyInUserLanguage.value,
+      handoff_enabled: handoffEnabled.value,
     };
     const updated = await api.updateBotConfig(auth.token, payload);
     auth.setBusinessName(updated.bot_name || payload.bot_name);
@@ -233,6 +236,23 @@ onMounted(load);
             <span class="font-medium text-navy-950">Mirror customer's language automatically</span>
             <p class="text-slate-500">
               When enabled, replies match the user's language and script (English, Hindi Devanagari, or Hinglish) while preserving technical terms, phone numbers, and prices.
+            </p>
+          </div>
+        </label>
+      </div>
+
+      <!-- Human handoff / Lead capture toggle (T9) -->
+      <div class="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+        <label class="flex items-start gap-2.5 cursor-pointer">
+          <input
+            v-model="handoffEnabled"
+            type="checkbox"
+            class="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+          />
+          <div class="text-xs">
+            <span class="font-medium text-navy-950">Enable Human Handoff & Lead Capture</span>
+            <p class="text-slate-500">
+              Allows website visitors to request human contact or leave their info in the chat widget. Submitted leads capture customer details and recent conversation context.
             </p>
           </div>
         </label>

@@ -153,4 +153,40 @@ This document tracks all changes, architecture decisions, new collections/indexe
   - `unanswered_questions`: `[("tenant_id", 1), ("created_at", 1)]`, `[("tenant_id", 1), ("created_at", -1)]`
   - `usage_daily`: `[("tenant_id", 1), ("date", 1)]`, `[("tenant_id", 1), ("date", -1)]`
 
+---
+
+### Task T9: Human Handoff / Lead Capture
+- **Status:** Complete
+- **Files Modified:**
+  - `app/models.py`:
+    - Added `handoff_enabled: bool = False` to `BotConfigModel`.
+    - Added `HandoffRequestModel` requiring name, at least one contact channel (email or phone), and optional note.
+    - Added `LeadStatusUpdateModel` (`status: "new" | "contacted" | "closed"`).
+  - `app/email_service.py`: Added `send_lead_notification_email()` for transactional lead alerts to the business owner.
+  - `app/main.py`:
+    - Added compound indexes on `leads_collection`: `[("tenant_id", 1), ("created_at", -1)]` and `[("tenant_id", 1), ("status", 1), ("created_at", -1)]`.
+    - Exposed `handoff_enabled` in `GET /widget/config`.
+    - Added `POST /api/handoff`: gated by tenant's `handoff_enabled` flag, enforced strict per-IP rate limit (3/hour), extracted and persisted last 10 messages of the chat session, and sent best-effort owner email alert.
+    - Added `GET /api/admin/leads`: paginated listing with status counts for business owners.
+    - Added `PATCH /api/admin/leads/{lead_id}`: lead status management.
+    - Added `GET /api/admin/leads/export.csv`: CSV export with CWE-1236 formula injection sanitization.
+  - `admin-vue/src/services/api.js`: Added `listLeads`, `updateLeadStatus`, and `exportLeadsCsv`.
+  - `admin-vue/src/components/BusinessSettings.vue`: Added toggle switch for `handoff_enabled`.
+  - `admin-vue/src/components/LeadsManager.vue`: Full lead management component with filter pills, status selector, expandable last-10-message chat context, and CSV download.
+  - `admin-vue/src/views/BusinessOwnerDashboard.vue`: Mounted `LeadsManager` component.
+  - `widget-vue/src/composables/useBusinessConfig.js`: Added `handoffEnabled` configuration state.
+  - `widget-vue/src/composables/useChat.js`: Added `submitHandoff` with friendly error mapping on 429 quota exhaustion.
+  - `widget-vue/src/components/ContactModal.vue`: Customer contact modal with validation, submission, and confirmation views.
+  - `widget-vue/src/components/ChatHeader.vue`: Added "Talk to a person" button and options menu item when `handoff_enabled` is true.
+  - `widget-vue/src/App.vue`: Wired contact dialog and submit handler.
+  - `tests/test_t9_leads.py`: Automated tests verifying gating, strict 3/hr per-IP rate limiting, 10-message extraction, status transitions, and sanitized CSV output.
+- **Database Collections & Indexes:**
+  - `leads`:
+    - Date sort index: `[("tenant_id", 1), ("created_at", -1)]`
+    - Status query index: `[("tenant_id", 1), ("status", 1), ("created_at", -1)]`
+- **Security & Reliability:**
+  - Strict per-IP rate limit: 3/hour prevents spam while allowing legitimate customers to submit inquiries.
+  - Lead persistence is decoupled from email delivery: if SMTP is offline or credentials are missing, the lead is safely saved in MongoDB.
+  - CSV Formula Injection defense: Neutralizes formula prefixes (`=`, `+`, `-`, `@`, `\t`, `\r`) with quote escapes.
+
 

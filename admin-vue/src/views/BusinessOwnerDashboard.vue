@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import AnalyticsOverview from "../components/AnalyticsOverview.vue";
+import LeadsManager from "../components/LeadsManager.vue";
 import ToolsManager from "../components/ToolsManager.vue";
 import DocumentsManager from "../components/DocumentsManager.vue";
 import WidgetEmbedCard from "../components/WidgetEmbedCard.vue";
@@ -36,6 +37,7 @@ function confirmLogout() {
 
     <div class="space-y-5">
       <AnalyticsOverview />
+      <LeadsManager />
       <UnansweredQuestions />
       <BusinessSettings />
       <WidgetEmbedCard v-if="auth.apiKey" :api-key="auth.apiKey" />

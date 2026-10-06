@@ -210,6 +210,43 @@ export function useChat(businessNameRef) {
     }
   }
 
+  async function submitHandoff({ name, email, phone, message }) {
+    if (!apiKey.value) {
+      throw new Error("Chat widget is not properly configured.");
+    }
+    const res = await fetch(`${API_BASE}/api/handoff`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": apiKey.value,
+        ...(parentOrigin.value ? { "X-Embed-Origin": parentOrigin.value } : {}),
+      },
+      body: JSON.stringify({
+        session_id: sessionId,
+        name,
+        email: email || null,
+        phone: phone || null,
+        message: message || "",
+      }),
+    });
+
+    if (!res.ok) {
+      let detail = "Unable to submit your contact request. Please try again.";
+      try {
+        const body = await res.json();
+        if (res.status === 429) {
+          detail = "You have reached the contact limit (3 requests per hour). Please try again later.";
+        } else if (body.detail) {
+          detail = body.detail;
+        }
+      } catch {
+        // fallback
+      }
+      throw new Error(detail);
+    }
+    return await res.json();
+  }
+
   function resetChat() {
     sessionId = generateSessionId();
     messages.value = [];
@@ -226,6 +263,7 @@ export function useChat(businessNameRef) {
     error,
     sendMessage,
     submitFeedback,
+    submitHandoff,
     hasApiKey,
     isResolved,
     resetChat,

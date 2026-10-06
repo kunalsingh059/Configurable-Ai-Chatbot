@@ -127,7 +127,7 @@ onUnmounted(() => {
         <button
           type="button"
           class="flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-200/60 hover:text-slate-700 active:scale-90"
-          :class="copied ? '!text-emerald-600 !bg-emerald-50' : ''"
+          :class="copied ? '!text-slate-800 !bg-light-50' : ''"
           :title="copied ? 'Copied to clipboard' : 'Copy response'"
           aria-label="Copy response"
           @click="copyText"
@@ -147,7 +147,7 @@ onUnmounted(() => {
           </svg>
           <svg
             v-else
-            class="h-4 w-4 text-emerald-600"
+            class="h-4 w-4 text-slate-800"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"

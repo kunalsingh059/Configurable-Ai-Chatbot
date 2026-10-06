@@ -8,7 +8,7 @@ import ConfirmDialog from "./components/ConfirmDialog.vue";
 import { useChat } from "./composables/useChat";
 import { useBusinessConfig } from "./composables/useBusinessConfig";
 
-const { businessName } = useBusinessConfig();
+const { businessName, welcomeMessage, primaryColor, avatarUrl, quickReplies } = useBusinessConfig();
 const {
   messages,
   isSending,
@@ -53,7 +53,7 @@ const isStandalone = window.parent === window;
       class="flex h-screen w-full items-end justify-end overflow-hidden"
       :class="isStandalone ? 'bg-slate-100 p-5' : 'bg-transparent'"
     >
-      <WidgetLauncher v-if="!isOpen" @click="isOpen = true" />
+      <WidgetLauncher v-if="!isOpen" :primary-color="primaryColor" @click="isOpen = true" />
 
       <div
         v-else
@@ -63,6 +63,8 @@ const isStandalone = window.parent === window;
       <ChatHeader
         :name="businessName"
         :initials="initials"
+        :avatar-url="avatarUrl"
+        :primary-color="primaryColor"
         @minimize="isOpen = false"
         @clear="showClearConfirm = true"
       />
@@ -86,6 +88,8 @@ const isStandalone = window.parent === window;
           :is-sending="isSending"
           :status-text="statusText"
           :initials="initials"
+          :welcome-message="welcomeMessage"
+          :quick-replies="quickReplies"
           @quick-action="sendMessage"
           @rate="({ messageId, rating }) => submitFeedback(messageId, rating)"
         />

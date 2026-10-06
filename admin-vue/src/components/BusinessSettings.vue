@@ -7,32 +7,84 @@ import { useToast } from "../composables/useToast";
 const auth = useAuthStore();
 const toast = useToast();
 
-const name = ref(auth.businessName || "");
+const botName = ref("");
+const welcomeMessage = ref("");
+const primaryColor = ref("#0b1224");
+const avatarUrl = ref("");
+const tone = ref("friendly");
+const replyInUserLanguage = ref(true);
+const quickReplies = ref([]);
+const newQuickReply = ref("");
+
 const isLoading = ref(true);
 const isSaving = ref(false);
 const error = ref(null);
 
 async function load() {
+  isLoading.value = true;
+  error.value = null;
   try {
-    const data = await api.getBusinessName(auth.token);
-    name.value = data.business_name || "";
+    const data = await api.getBotConfig(auth.token);
+    botName.value = data.bot_name || auth.businessName || "";
+    welcomeMessage.value = data.welcome_message || "";
+    primaryColor.value = data.primary_color || "#0b1224";
+    avatarUrl.value = data.avatar_url || "";
+    tone.value = data.tone || "friendly";
+    replyInUserLanguage.value = data.reply_in_user_language !== false;
+    quickReplies.value = Array.isArray(data.quick_replies) ? [...data.quick_replies] : [];
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "Couldn't load your business name.";
+    error.value = err instanceof ApiError ? err.message : "Couldn't load bot customization settings.";
   } finally {
     isLoading.value = false;
   }
 }
 
+function addQuickReply() {
+  const text = newQuickReply.value.trim();
+  if (!text) return;
+  if (quickReplies.value.length >= 6) {
+    toast.error("You can add at most 6 quick replies.");
+    return;
+  }
+  if (text.length > 40) {
+    toast.error("Quick reply must be 40 characters or fewer.");
+    return;
+  }
+  quickReplies.value.push(text);
+  newQuickReply.value = "";
+}
+
+function removeQuickReply(index) {
+  quickReplies.value.splice(index, 1);
+}
+
 async function save() {
-  if (!name.value.trim()) return;
+  if (!botName.value.trim()) {
+    error.value = "Bot name is required.";
+    return;
+  }
+  if (avatarUrl.value.trim() && !avatarUrl.value.trim().startsWith("https://")) {
+    error.value = "Avatar URL must start with https://";
+    return;
+  }
+
   isSaving.value = true;
   error.value = null;
   try {
-    const data = await api.updateBusinessName(auth.token, name.value.trim());
-    auth.setBusinessName(data.business_name);
-    toast.success("Widget name updated - it'll show up next time the widget loads.");
+    const payload = {
+      bot_name: botName.value.trim(),
+      welcome_message: welcomeMessage.value.trim() || null,
+      primary_color: primaryColor.value,
+      avatar_url: avatarUrl.value.trim() || null,
+      tone: tone.value,
+      quick_replies: quickReplies.value,
+      reply_in_user_language: replyInUserLanguage.value,
+    };
+    const updated = await api.updateBotConfig(auth.token, payload);
+    auth.setBusinessName(updated.bot_name || payload.bot_name);
+    toast.success("Chatbot settings updated successfully.");
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : "Couldn't save the name.";
+    error.value = err instanceof ApiError ? err.message : "Couldn't save bot settings.";
   } finally {
     isSaving.value = false;
   }
@@ -43,30 +95,191 @@ onMounted(load);
 
 <template>
   <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
-    <h2 class="text-sm font-semibold text-navy-950">Widget name</h2>
-    <p class="mt-1 text-xs text-slate-500">
-      Shown in your chat widget's header instead of the default "Support Assistant".
-    </p>
-
-    <p v-if="isLoading" class="mt-3 text-xs text-slate-400">Loading...</p>
-
-    <form v-else class="mt-3 flex items-center gap-2" @submit.prevent="save">
-      <input
-        v-model="name"
-        type="text"
-        required
-        placeholder="e.g. Life Secure Pathology Assistant"
-        class="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
-      />
-      <button
-        type="submit"
-        :disabled="isSaving"
-        class="shrink-0 rounded-lg bg-navy-950 px-4 py-2 text-xs font-medium text-white hover:bg-navy-900 disabled:opacity-60"
+    <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+      <div>
+        <h2 class="text-sm font-semibold text-navy-950">Chatbot Appearance & Personality</h2>
+        <p class="mt-0.5 text-xs text-slate-500">
+          Customize how your assistant looks, greets visitors, and speaks.
+        </p>
+      </div>
+      <span
+        v-if="!isLoading"
+        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
+        :style="{ backgroundColor: `${primaryColor}15`, color: primaryColor }"
       >
-        {{ isSaving ? "Saving..." : "Save" }}
-      </button>
-    </form>
+        <span class="h-2 w-2 rounded-full" :style="{ backgroundColor: primaryColor }" />
+        Theme Active
+      </span>
+    </div>
 
-    <p v-if="error" class="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">{{ error }}</p>
+    <p v-if="isLoading" class="mt-4 text-xs text-slate-400">Loading settings...</p>
+
+    <form v-else class="mt-4 space-y-4" @submit.prevent="save">
+      <!-- Bot Name & Tone Row -->
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <label class="block text-xs font-medium text-slate-700">Bot Display Name</label>
+          <input
+            v-model="botName"
+            type="text"
+            required
+            maxlength="100"
+            placeholder="e.g. Support Assistant"
+            class="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
+          />
+          <p class="mt-1 text-[11px] text-slate-400">Shown in widget header and conversation title.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-700">Conversation Tone</label>
+          <select
+            v-model="tone"
+            class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500"
+          >
+            <option value="friendly">Friendly & Warm (Default)</option>
+            <option value="professional">Professional & Concise</option>
+            <option value="casual">Casual & Conversational</option>
+          </select>
+          <p class="mt-1 text-[11px] text-slate-400">Influences the assistant's personality and warmth.</p>
+        </div>
+      </div>
+
+      <!-- Welcome Message -->
+      <div>
+        <label class="block text-xs font-medium text-slate-700">Welcome Message</label>
+        <textarea
+          v-model="welcomeMessage"
+          rows="2"
+          maxlength="300"
+          placeholder="Start the conversation whenever you're ready."
+          class="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
+        />
+        <p class="mt-1 text-[11px] text-slate-400">Displayed in the chat widget when a visitor opens it.</p>
+      </div>
+
+      <!-- Theme Color & Avatar URL Row -->
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <label class="block text-xs font-medium text-slate-700">Brand Header Color</label>
+          <div class="mt-1 flex items-center gap-2">
+            <input
+              v-model="primaryColor"
+              type="color"
+              class="h-9 w-10 cursor-pointer rounded border border-slate-200 p-0.5"
+            />
+            <input
+              v-model="primaryColor"
+              type="text"
+              maxlength="7"
+              pattern="^#(?:[0-9a-fA-F]{3}){1,2}$"
+              placeholder="#0b1224"
+              class="flex-1 rounded-lg border border-slate-200 px-3 py-2 font-mono text-sm outline-none focus:border-amber-500"
+            />
+          </div>
+          <p class="mt-1 text-[11px] text-slate-400">Applied to widget header and launcher button.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-700">Avatar Image URL (HTTPS)</label>
+          <div class="mt-1 flex items-center gap-2">
+            <input
+              v-model="avatarUrl"
+              type="url"
+              maxlength="500"
+              placeholder="https://example.com/logo.png"
+              class="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
+            />
+            <img
+              v-if="avatarUrl && avatarUrl.startsWith('https://')"
+              :src="avatarUrl"
+              alt="Avatar preview"
+              class="h-9 w-9 rounded-lg border border-slate-200 object-cover"
+              @error="(e) => (e.target.style.display = 'none')"
+            />
+          </div>
+          <p class="mt-1 text-[11px] text-slate-400">Optional square logo or avatar image.</p>
+        </div>
+      </div>
+
+      <!-- Multi-language checkbox -->
+      <div class="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+        <label class="flex items-start gap-2.5 cursor-pointer">
+          <input
+            v-model="replyInUserLanguage"
+            type="checkbox"
+            class="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+          />
+          <div class="text-xs">
+            <span class="font-medium text-navy-950">Mirror customer's language automatically</span>
+            <p class="text-slate-500">
+              When enabled, replies match the user's language and script (English, Hindi Devanagari, or Hinglish) while preserving technical terms, phone numbers, and prices.
+            </p>
+          </div>
+        </label>
+      </div>
+
+      <!-- Quick Replies -->
+      <div>
+        <label class="block text-xs font-medium text-slate-700">
+          Quick Reply Suggestions (Max 6)
+        </label>
+        <p class="text-[11px] text-slate-400">
+          Clickable suggestion pills shown in an empty chat window to help visitors start quickly.
+        </p>
+
+        <!-- Chips list -->
+        <div v-if="quickReplies.length > 0" class="mt-2 flex flex-wrap gap-1.5">
+          <span
+            v-for="(chip, index) in quickReplies"
+            :key="index"
+            class="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-navy-950 shadow-sm"
+          >
+            <span>{{ chip }}</span>
+            <button
+              type="button"
+              class="text-slate-400 hover:text-rose-500"
+              title="Remove"
+              @click="removeQuickReply(index)"
+            >
+              ×
+            </button>
+          </span>
+        </div>
+
+        <!-- Add chip input -->
+        <div v-if="quickReplies.length < 6" class="mt-2 flex items-center gap-2">
+          <input
+            v-model="newQuickReply"
+            type="text"
+            maxlength="40"
+            placeholder="e.g. Check appointment status"
+            class="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-amber-500"
+            @keydown.enter.prevent="addQuickReply"
+          />
+          <button
+            type="button"
+            class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-amber-500"
+            @click="addQuickReply"
+          >
+            + Add suggestion
+          </button>
+        </div>
+      </div>
+
+      <!-- Feedback / Error messages -->
+      <p v-if="error" class="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">
+        {{ error }}
+      </p>
+
+      <div class="flex justify-end pt-2">
+        <button
+          type="submit"
+          :disabled="isSaving"
+          class="rounded-lg bg-navy-950 px-5 py-2 text-xs font-medium text-white shadow-sm hover:bg-navy-900 disabled:opacity-60"
+        >
+          {{ isSaving ? "Saving changes..." : "Save Bot Settings" }}
+        </button>
+      </div>
+    </form>
   </div>
 </template>

@@ -65,6 +65,42 @@ class UnansweredStatusUpdateModel(BaseModel):
     status: str = Field(..., pattern="^(open|resolved|ignored)$")
 
 
+HEX_COLOR_PATTERN = r"^#(?:[0-9a-fA-F]{3}){1,2}$"
+
+class BotConfigModel(BaseModel):
+    """Per-tenant chatbot appearance and personality configuration."""
+    bot_name: Optional[str] = Field(None, max_length=100)
+    welcome_message: Optional[str] = Field(None, max_length=300)
+    primary_color: Optional[str] = Field(None, pattern=HEX_COLOR_PATTERN)
+    avatar_url: Optional[str] = Field(None, max_length=500)
+    tone: Optional[str] = Field("friendly", pattern="^(friendly|professional|casual)$")
+    quick_replies: list[str] = Field(default_factory=list, max_length=6)
+    reply_in_user_language: bool = True
+
+    @field_validator("quick_replies")
+    @classmethod
+    def validate_quick_replies(cls, v: list[str]) -> list[str]:
+        cleaned = []
+        for item in v:
+            item_str = item.strip()
+            if item_str:
+                if len(item_str) > 40:
+                    raise ValueError(f"Quick reply '{item_str[:15]}...' exceeds 40 characters")
+                cleaned.append(item_str)
+        return cleaned[:6]
+
+    @field_validator("avatar_url")
+    @classmethod
+    def validate_avatar_url(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return None
+        v = v.strip()
+        if not v.startswith("https://"):
+            raise ValueError("Avatar URL must begin with https://")
+        return v
+
+
+
 class ToolTestModel(BaseModel):
     """Body for the 'test this tool live' admin action - same shape as a
     tool's request-building fields, minus the params_schema (the admin

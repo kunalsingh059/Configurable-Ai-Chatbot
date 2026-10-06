@@ -8,6 +8,8 @@ const props = defineProps({
   isSending: { type: Boolean, default: false },
   statusText: { type: String, default: null },
   initials: { type: String, default: "AI" },
+  welcomeMessage: { type: String, default: "Start the conversation whenever you're ready." },
+  quickReplies: { type: Array, default: () => [] },
 });
 const emit = defineEmits(["quick-action", "rate"]);
 
@@ -38,10 +40,22 @@ watch(
   <div ref="scrollEl" class="chat-scroll flex-1 space-y-4 overflow-x-hidden overflow-y-auto bg-slate-50 px-5 py-5">
     <div
       v-if="messages.length === 0"
-      class="flex h-full flex-col items-center justify-center gap-3 text-center"
+      class="flex h-full flex-col items-center justify-center gap-3 text-center px-2"
     >
-      <p class="text-[13px] text-slate-400">Start the conversation whenever you're ready.</p>
+      <p class="text-[13px] text-slate-500 max-w-xs">{{ welcomeMessage || "Start the conversation whenever you're ready." }}</p>
+      
+      <div v-if="quickReplies && quickReplies.length > 0" class="flex flex-wrap justify-center gap-2 max-w-sm mt-1">
+        <button
+          v-for="(reply, idx) in quickReplies"
+          :key="idx"
+          class="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[12px] font-medium text-navy-900 shadow-sm transition hover:border-amber-500 hover:text-amber-600 active:scale-95"
+          @click="emit('quick-action', reply)"
+        >
+          {{ reply }}
+        </button>
+      </div>
       <button
+        v-else
         class="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-[13px] font-medium text-navy-900 transition hover:border-amber-500 hover:text-amber-600"
         @click="emit('quick-action', 'Hi')"
       >

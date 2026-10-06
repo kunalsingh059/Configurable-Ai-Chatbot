@@ -34,12 +34,13 @@ from app.db import (
 from app.models import (
     ToolModel, ToolTestModel, DocumentModel, RegisterModel, LoginModel,
     BusinessNameModel, ForgotPasswordModel, ResetPasswordModel, AllowedDomainsModel,
-    FeedbackModel, UnansweredStatusUpdateModel, derive_business_name, serialize_tool, serialize_document,
+    FeedbackModel, UnansweredStatusUpdateModel, BotConfigModel, derive_business_name, serialize_tool, serialize_document,
 )
 from app.dynamic_tools import get_tenant_tools, execute_tool, format_tool_result_for_llm
 from app.crypto import encrypt_headers
 from app.mock_llm import run_mock_chat_turn_stream
 from app.groq_client import run_groq_chat_turn_stream
+from app.llm_orchestrator import run_orchestrated_chat_turn_stream
 from app.documents import extract_text, get_tenant_documents, ingest_document_chunks, delete_document_chunks
 from app.embeddings import warm_up as warm_up_embeddings
 from app.email_service import send_password_reset_email
@@ -56,43 +57,53 @@ from app.auth import (
 )
 
 # Which LLM powers the chat: "mock" (free, fake reasoning - dev/test ONLY)
-# or "groq" (real reasoning, the only real provider this app supports).
-# LLM_PROVIDER has NO default on purpose - a missing/invalid value must fail
-# startup loudly rather than silently falling back to anything, mock
-# included. That silent-mock fallback used to be the default behavior here,
-# which is exactly the "app boots fine, customers get fake canned answers,
-# nobody notices" failure mode this now prevents.
-_RAW_LLM_PROVIDER = os.environ.get("LLM_PROVIDER")
-LLM_PROVIDER = (_RAW_LLM_PROVIDER or "").lower()
+# LLM provider configuration (T5: Primary & Fallback support)
+# LLM_PRIMARY defaults to LLM_PROVIDER if not explicitly set.
+_RAW_LLM_PRIMARY = os.environ.get("LLM_PRIMARY") or os.environ.get("LLM_PROVIDER")
+LLM_PRIMARY = (_RAW_LLM_PRIMARY or "").lower().strip()
+LLM_PROVIDER = LLM_PRIMARY  # Backward compatibility alias
 
-if not _RAW_LLM_PROVIDER:
+_RAW_LLM_FALLBACK = os.environ.get("LLM_FALLBACK")
+LLM_FALLBACK = (_RAW_LLM_FALLBACK or "").lower().strip() or None
+
+if not _RAW_LLM_PRIMARY:
     raise RuntimeError(
-        "LLM_PROVIDER is not set in .env - refusing to start. Set "
-        "LLM_PROVIDER=groq (and GROQ_API_KEY) for real answers, or "
-        "explicitly LLM_PROVIDER=mock for local dev/testing only."
+        "LLM_PRIMARY (or LLM_PROVIDER) is not set in .env - refusing to start. Set "
+        "LLM_PRIMARY=groq (and GROQ_API_KEY) for real answers, or "
+        "explicitly LLM_PRIMARY=mock for local dev/testing only."
     )
-elif LLM_PROVIDER == "mock":
-    # Legitimate for local dev/testing, but only because it was explicitly
-    # opted into above (no default can land here) - still loud about it so
-    # it's never mistaken for a real deploy.
+elif LLM_PRIMARY == "mock":
     logger.warning(
-        "LLM_PROVIDER=mock - the chatbot is running on FAKE canned "
+        "LLM_PRIMARY=mock - the chatbot is running on FAKE canned "
         "responses, not a real model. This must never be set in production."
     )
-elif LLM_PROVIDER == "groq":
+elif LLM_PRIMARY == "groq":
     if not os.environ.get("GROQ_API_KEY"):
-        # Fail at startup, not on the first person's chat message - same
-        # principle as the SUPERADMIN_USERNAME/PASSWORD check below, just
-        # for a config error that would otherwise only surface as a 500.
         raise RuntimeError(
-            "LLM_PROVIDER=groq but GROQ_API_KEY is not set in .env - the "
+            "LLM_PRIMARY=groq but GROQ_API_KEY is not set in .env - the "
+            "app cannot start without it."
+        )
+elif LLM_PRIMARY == "anthropic":
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise RuntimeError(
+            "LLM_PRIMARY=anthropic but ANTHROPIC_API_KEY is not set in .env - the "
             "app cannot start without it."
         )
 else:
     raise RuntimeError(
-        f"LLM_PROVIDER={_RAW_LLM_PROVIDER!r} is not a supported value - "
-        "use 'groq' (production) or 'mock' (dev/test only)."
+        f"LLM_PRIMARY={_RAW_LLM_PRIMARY!r} is not a supported value - "
+        "use 'groq', 'anthropic', or 'mock'."
     )
+
+if LLM_FALLBACK:
+    if LLM_FALLBACK not in ("groq", "anthropic", "mock"):
+        raise RuntimeError(
+            f"LLM_FALLBACK={_RAW_LLM_FALLBACK!r} is not supported - "
+            "use 'anthropic', 'groq', or 'mock'."
+        )
+    if LLM_FALLBACK == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
+        logger.warning("LLM_FALLBACK is set to 'anthropic' but ANTHROPIC_API_KEY is missing in environment.")
+    logger.info(f"LLM Failover configured: Primary='{LLM_PRIMARY}', Fallback='{LLM_FALLBACK}'")
 
 # Where admin-vue's reset-password page lives - the emailed link points
 # here with ?token=... appended. Defaults to local dev; set this in .env
@@ -640,13 +651,7 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
 
     async def event_stream():
         try:
-            # LLM_PROVIDER is validated to be exactly "mock" or "groq" at
-            # startup (see the fail-closed check above) - nothing else can
-            # reach this point, so no silent third fallback.
-            if LLM_PROVIDER == "mock":
-                gen = run_mock_chat_turn_stream(tenant_id, conversation, bot_config=bot_config)
-            else:
-                gen = run_groq_chat_turn_stream(tenant_id, conversation, bot_config=bot_config)
+            gen = run_orchestrated_chat_turn_stream(tenant_id, conversation, bot_config=bot_config)
 
             # Bounds the ENTIRE multi-hop tool-calling loop, not just a
             # single LLM call or a single chunk - without this, up to 5
@@ -853,20 +858,70 @@ async def update_unanswered_status(
     return {"id": item_id, "status": payload.status}
 
 
+# ------------------------ Per-tenant bot customization (T4) ------------------------
 @app.get("/widget/config")
+@app.get("/api/widget-config")
 async def widget_config(tenant_id: str = Depends(get_tenant_from_api_key)):
     """
-    Public config the widget calls on load to personalize itself - business
-    name, and anything else per-tenant you add later (logo URL, brand color).
-    Reuses get_tenant_from_api_key, so a deactivated business's widget can't
-    even fetch its own config, same as /chat.
+    Public config the widget calls on load to personalize itself - bot name,
+    welcome message, brand colors, avatar, and quick replies. Returns only safe
+    public fields (never secrets, tokens, or hashes).
     """
     user = await admin_users_collection.find_one({"tenant_id": tenant_id, "role": "business_owner"})
     business_name = (user.get("business_name") if user else None) or derive_business_name(tenant_id)
+    bot_config = (user.get("bot_config") if user else None) or {}
+    bot_name = bot_config.get("bot_name") or business_name
     return {
         "tenant_id": tenant_id,
-        "business_name": business_name,
+        "business_name": bot_name,
+        "bot_name": bot_name,
+        "welcome_message": bot_config.get("welcome_message") or "Start the conversation whenever you're ready.",
+        "primary_color": bot_config.get("primary_color") or "#0b1224",
+        "avatar_url": bot_config.get("avatar_url"),
+        "quick_replies": bot_config.get("quick_replies") or [],
     }
+
+
+@app.get("/admin/bot-config")
+async def get_bot_config(tenant_id: str = Depends(get_current_business_owner)):
+    """Returns current bot customization settings for the logged in business owner."""
+    user = await admin_users_collection.find_one({"tenant_id": tenant_id, "role": "business_owner"})
+    if not user:
+        raise HTTPException(status_code=404, detail="Business owner not found")
+    bot_config = user.get("bot_config") or {}
+    business_name = user.get("business_name") or derive_business_name(tenant_id)
+    return {
+        "bot_name": bot_config.get("bot_name") or business_name,
+        "welcome_message": bot_config.get("welcome_message") or "Start the conversation whenever you're ready.",
+        "primary_color": bot_config.get("primary_color") or "#0b1224",
+        "avatar_url": bot_config.get("avatar_url"),
+        "tone": bot_config.get("tone") or "friendly",
+        "quick_replies": bot_config.get("quick_replies") or [],
+        "reply_in_user_language": bot_config.get("reply_in_user_language", True),
+    }
+
+
+@app.put("/admin/bot-config")
+@app.patch("/admin/bot-config")
+async def update_bot_config(payload: BotConfigModel, tenant_id: str = Depends(get_current_business_owner)):
+    """Updates appearance, tone, and personality settings for the business's chatbot."""
+    user = await admin_users_collection.find_one({"tenant_id": tenant_id, "role": "business_owner"})
+    if not user:
+        raise HTTPException(status_code=404, detail="Business owner not found")
+
+    existing_config = user.get("bot_config") or {}
+    new_config = {**existing_config, **payload.model_dump(exclude_unset=True)}
+
+    update_fields = {"bot_config": new_config}
+    if payload.bot_name:
+        update_fields["business_name"] = payload.bot_name
+
+    await admin_users_collection.update_one(
+        {"tenant_id": tenant_id, "role": "business_owner"},
+        {"$set": update_fields},
+    )
+    return new_config
+
 
 
 @app.get("/admin/business-name")

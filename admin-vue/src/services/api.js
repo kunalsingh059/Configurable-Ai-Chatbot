@@ -58,6 +58,9 @@ export const api = {
   getBusinessName: (token) => request("/admin/business-name", { token }),
   updateBusinessName: (token, businessName) =>
     request("/admin/business-name", { method: "PATCH", body: { business_name: businessName }, token }),
+  getBotConfig: (token) => request("/admin/bot-config", { token }),
+  updateBotConfig: (token, config) =>
+    request("/admin/bot-config", { method: "PUT", body: config, token }),
 
   // Business owner - embed security (allowed websites + API key)
   getEmbedSettings: (token) => request("/admin/embed-settings", { token }),

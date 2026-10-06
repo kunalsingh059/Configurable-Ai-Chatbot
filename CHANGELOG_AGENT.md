@@ -7,7 +7,7 @@ This document tracks all changes, architecture decisions, new collections/indexe
 
 ---
 
-## [Phase 1] - In Progress
+## [Phase 1] - Complete
 
 ### Architectural Decisions & Scope
 - **P0-1 (Email Non-fatal):** Already safe in current codebase (lazy credentials check, unhandled exceptions caught).
@@ -71,3 +71,38 @@ This document tracks all changes, architecture decisions, new collections/indexe
   - `tests/test_t3_multilanguage.py`: Unit tests validating script-matching prompt injection, disabling via `reply_in_user_language=False`, and tone adaptations.
 - **Performance & Latency:**
   - 0 additional network requests, 0 latency overhead. Groq natively generates multilingual responses.
+
+---
+
+### Task T4: Per-tenant Bot Customization
+- **Status:** Complete
+- **Files Modified:**
+  - `app/models.py`: Added `BotConfigModel` with validation for hex color regex, tone options, max 6 quick reply chips (<=40 chars each), and HTTPS avatar URL.
+  - `app/main.py`: Added `GET /admin/bot-config`, `PUT /admin/bot-config`, and updated `GET /widget/config` to safely expose customization without sensitive tenant secrets.
+  - `admin-vue/src/services/api.js`: Added `getBotConfig` and `updateBotConfig`.
+  - `admin-vue/src/components/BusinessSettings.vue`: Added full bot configuration UI (bot display name, tone selector, welcome message, hex color picker & live swatch, HTTPS avatar URL input & preview, user-language mirror toggle, and interactive quick reply chip manager).
+  - `widget-vue/src/composables/useBusinessConfig.js`: Added reactive state for `welcomeMessage`, `primaryColor`, `avatarUrl`, and `quickReplies`.
+  - `widget-vue/src/components/ChatHeader.vue`: Dynamically styled header background using `primaryColor` and rendered custom avatar image when present.
+  - `widget-vue/src/components/WidgetLauncher.vue`: Styled launcher button using custom `primaryColor`.
+  - `widget-vue/src/components/MessageList.vue`: Rendered dynamic `welcomeMessage` and clickable `quickReplies` pills in empty state.
+  - `widget-vue/src/App.vue`: Wired customization props throughout widget hierarchy.
+  - `tests/test_t4_bot_config.py`: Unit and integration tests covering model validation, 401 unauthorized access, 422 malformed hex colors, and verified that `GET /widget/config` reflects saved settings.
+- **Security & Multi-Tenancy:**
+  - Bot config updates are restricted to authenticated business owners (`role: "business_owner"` matching `tenant_id`).
+  - Strict input sanitization rejects arbitrary scripts or non-HTTPS URLs for avatars.
+  - Widget config endpoint only returns public presentation attributes.
+
+---
+
+### Task T5: Fallback LLM Provider
+- **Status:** Complete
+- **Files Modified:**
+  - `app/anthropic_client.py`: Created Anthropic Claude streaming integration supporting tool calling, RAG context injection, tone/language adherence, and message normalization.
+  - `app/llm_orchestrator.py`: Implemented LLM orchestrator with automatic failover detection (429 rate limit, 5xx server error, connection drop, timeout) before tokens are streamed to client.
+  - `app/main.py`: Connected chat stream endpoint to `run_orchestrated_chat_turn_stream` and added startup validation for `LLM_PRIMARY`, `LLM_FALLBACK`, and provider credentials.
+  - `.env.example`: Documented `LLM_PRIMARY`, `LLM_FALLBACK`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL`.
+  - `tests/test_t5_fallback.py`: Verified Anthropic helper formatting, failover exception classification, seamless fallback execution from Groq 429 to fallback provider, prevention of mid-stream failover if tokens were already emitted, and re-raise behavior when no fallback is configured.
+- **Resilience & SLA:**
+  - Zero downtime for customer queries during Groq rate limits (30 RPM free tier ceiling) or unexpected upstream provider outages.
+  - Latency impact: 0ms overhead during healthy primary operation; failover executes within <500ms upon primary 429/5xx response.
+

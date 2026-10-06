@@ -4,6 +4,8 @@ import { ref } from "vue";
 defineProps({
   name: { type: String, default: "Support Assistant" },
   initials: { type: String, default: "AI" },
+  avatarUrl: { type: String, default: null },
+  primaryColor: { type: String, default: null },
 });
 const emit = defineEmits(["minimize", "clear"]);
 
@@ -16,20 +18,31 @@ function clearAndClose() {
 </script>
 
 <template>
-  <div class="relative bg-navy-950 px-4 py-3.5">
+  <div
+    class="relative bg-navy-950 px-4 py-3.5 transition-colors"
+    :style="primaryColor ? { backgroundColor: primaryColor } : {}"
+  >
     <div class="pointer-events-none absolute inset-0 overflow-hidden">
-      <div class="absolute -right-6 -top-10 h-32 w-32 rounded-full bg-navy-800/60" />
+      <div class="absolute -right-6 -top-10 h-32 w-32 rounded-full bg-white/10" />
     </div>
     <div class="relative flex items-center justify-between gap-2">
       <div class="flex min-w-0 items-center gap-2.5">
+        <img
+          v-if="avatarUrl"
+          :src="avatarUrl"
+          alt="Avatar"
+          class="h-10 w-10 shrink-0 rounded-xl object-cover ring-1 ring-white/20"
+          @error="(e) => (e.target.style.display = 'none')"
+        />
         <div
+          v-else
           class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-sm font-semibold text-navy-950"
         >
           {{ initials }}
         </div>
         <div class="min-w-0">
           <h1 class="truncate text-[14px] font-semibold text-white" :title="name">{{ name }}</h1>
-          <p class="flex items-center gap-1.5 text-[11px] text-white/60">
+          <p class="flex items-center gap-1.5 text-[11px] text-white/70">
             <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
             <span class="truncate">Online · Usually replies instantly</span>
           </p>

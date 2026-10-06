@@ -1,10 +1,14 @@
 <script setup>
+defineProps({
+  primaryColor: { type: String, default: null },
+});
 defineEmits(["click"]);
 </script>
 
 <template>
   <button
     class="flex h-16 w-16 items-center justify-center rounded-full bg-navy-950 text-amber-500 shadow-lg transition hover:scale-105 active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500"
+    :style="primaryColor ? { backgroundColor: primaryColor } : {}"
     aria-label="Open chat"
     @click="$emit('click')"
   >

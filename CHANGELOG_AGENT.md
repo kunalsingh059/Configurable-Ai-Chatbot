@@ -188,7 +188,9 @@ This document tracks all changes, architecture decisions, new collections/indexe
 - **Security & Reliability:**
   - Strict per-IP rate limit: 3/hour prevents spam while allowing legitimate customers to submit inquiries.
   - Lead persistence is decoupled from email delivery: if SMTP is offline or credentials are missing, the lead is safely saved in MongoDB. Owner email sending runs non-blocking via `asyncio.to_thread` with a 5s socket timeout so lead creation response time is never delayed by network SMTP roundtrips.
+  - Added Resend HTTPS REST API transport (`RESEND_API_KEY`, `EMAIL_FROM`) in `app/email_service.py` to bypass cloud host SMTP port blocks (Render, Railway, DigitalOcean) using port 443, with automatic fallback to Gmail SMTP for local development.
   - CSV Formula Injection defense: Neutralizes formula prefixes (`=`, `+`, `-`, `@`, `\t`, `\r`) with quote escapes.
   - Unanswered question detection normalizes curly apostrophes (`’`, `‘`) and includes `reason` in the persisted document.
+
 
 

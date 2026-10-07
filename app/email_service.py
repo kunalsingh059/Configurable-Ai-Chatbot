@@ -1,54 +1,90 @@
 """
-Sends transactional emails (currently just password resets) via Gmail SMTP.
+Sends transactional emails (password resets and lead notifications).
 
-Uses only Python's standard library (smtplib + email) - no new pip package,
-no new venv risk. Gmail requires an "App Password" for this, not your
-regular Gmail password - regular passwords are blocked by Google for SMTP
-login. Generate one at: https://myaccount.google.com/apppasswords
-(requires 2-Step Verification to be turned on for the Gmail account first).
+Supported Transports:
+1. Resend HTTPS REST API (Recommended for Deployed / Cloud Environments):
+   Bypasses outbound SMTP port blocks (Render, Railway, DigitalOcean, etc.)
+   using standard HTTPS REST API calls (Port 443).
+   Add to .env:
+       RESEND_API_KEY=re_xxxxxxxxx
+       EMAIL_FROM="Chatbot Platform <onboarding@resend.dev>"
 
-Add to .env:
-    GMAIL_ADDRESS=your-platform-account@gmail.com
-    GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx   (the 16-char app password, spaces are fine)
+2. Gmail SMTP (Fallback for Local Development):
+   Add to .env:
+       GMAIL_ADDRESS=your-platform-account@gmail.com
+       GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
 """
 
 import os
 import smtplib
+import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import httpx
 
-# Deliberately NOT read/validated at module import time (that was the bug -
-# see below). Read fresh inside send_password_reset_email() instead, the
-# same lazy pattern already used correctly for GROQ_API_KEY/ANTHROPIC_API_KEY
-# in groq_client.py
-#
-# WHY THIS MATTERS: main.py does `from app.email_service import
-# send_password_reset_email` unconditionally at the top of the file, as
-# part of loading the whole application. If this module raised at IMPORT
-# time (as it used to) whenever Gmail credentials were missing, that
-# single missing credential for a non-critical feature (password reset
-# email) would prevent the ENTIRE app from starting - including live chat,
-# admin login, everything - not just password reset. A production deploy
-# that hasn't gotten around to setting up a Gmail App Password yet would
-# refuse to boot at all. Making this lazy means the app starts fine
-# regardless, and only an actual password-reset attempt fails - and even
-# that fails safely, since /auth/forgot-password in main.py already wraps
-# this call in a try/except and returns its normal generic success message
-# either way (so this also doesn't create a new email-enumeration signal).
+logger = logging.getLogger("chatbot_platform.email")
 
 
-def send_password_reset_email(to_email: str, reset_link: str) -> None:
+def _send_email_transport(
+    to_email: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+) -> None:
+    """
+    Dispatches transactional email using either Resend API or Gmail SMTP.
+    Prefers Resend if RESEND_API_KEY is present (ideal for deployed servers).
+    """
+    resend_api_key = os.environ.get("RESEND_API_KEY")
+    if resend_api_key and resend_api_key.strip():
+        from_email = os.environ.get("EMAIL_FROM") or "Chatbot Platform <onboarding@resend.dev>"
+        headers = {
+            "Authorization": f"Bearer {resend_api_key.strip()}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "from": from_email.strip(),
+            "to": [to_email.strip()],
+            "subject": subject,
+            "text": text_body,
+            "html": html_body,
+        }
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post("https://api.resend.com/emails", headers=headers, json=payload)
+                if resp.status_code >= 400:
+                    raise RuntimeError(f"Resend API error ({resp.status_code}): {resp.text}")
+            logger.info(f"Transactional email sent via Resend to {to_email}")
+            return
+        except Exception as e:
+            logger.error(f"Failed to send email via Resend to {to_email}: {e}")
+            raise e
+
+    # Fallback: Gmail SMTP
     gmail_address = os.environ.get("GMAIL_ADDRESS")
     gmail_app_password = os.environ.get("GMAIL_APP_PASSWORD")
 
     if not gmail_address or not gmail_app_password:
         raise RuntimeError(
-            "GMAIL_ADDRESS / GMAIL_APP_PASSWORD are not set in .env - the "
-            "password reset feature requires Gmail to be configured. Generate "
-            "an App Password at https://myaccount.google.com/apppasswords "
-            "(requires 2-Step Verification enabled on that Gmail account first)."
+            "Neither RESEND_API_KEY nor GMAIL_ADDRESS / GMAIL_APP_PASSWORD are set in .env. "
+            "Configure RESEND_API_KEY (recommended for cloud hosting) or Gmail credentials."
         )
 
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = gmail_address
+    msg["To"] = to_email
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    with smtplib.SMTP("smtp.gmail.com", 587, timeout=5) as server:
+        server.starttls()
+        server.login(gmail_address, gmail_app_password)
+        server.send_message(msg)
+    logger.info(f"Transactional email sent via Gmail SMTP to {to_email}")
+
+
+def send_password_reset_email(to_email: str, reset_link: str) -> None:
     # Same navy/amber brand colors as admin-vue's tailwind.config.js, so the
     # email matches the actual product instead of looking like a generic
     # unbranded system notification.
@@ -146,21 +182,12 @@ def send_password_reset_email(to_email: str, reset_link: str) -> None:
 </html>
 """
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = "Reset your Chatbot Platform password"
-    msg["From"] = gmail_address
-    msg["To"] = to_email
-    # Plain text part attached FIRST, HTML second - per the MIME spec for
-    # multipart/alternative, clients render the LAST part they understand,
-    # so this ordering makes HTML-capable clients show the styled version
-    # while plain-text-only clients fall back to the text version.
-    msg.attach(MIMEText(text_body, "plain", "utf-8"))
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
-
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(gmail_address, gmail_app_password)
-        server.send_message(msg)
+    _send_email_transport(
+        to_email=to_email,
+        subject="Reset your Chatbot Platform password",
+        text_body=text_body,
+        html_body=html_body,
+    )
 
 
 def send_lead_notification_email(
@@ -172,12 +199,6 @@ def send_lead_notification_email(
     lead_message: str = None,
 ) -> None:
     """Best-effort notification to business owner when a new lead is captured (T9)."""
-    gmail_address = os.environ.get("GMAIL_ADDRESS")
-    gmail_app_password = os.environ.get("GMAIL_APP_PASSWORD")
-
-    if not gmail_address or not gmail_app_password:
-        raise RuntimeError("GMAIL_ADDRESS / GMAIL_APP_PASSWORD are not configured in .env")
-
     contact_parts = []
     if lead_email:
         contact_parts.append(f"Email: {lead_email}")
@@ -214,14 +235,9 @@ def send_lead_notification_email(
   </body>
 </html>"""
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"New Lead: {lead_name} ({tenant_id})"
-    msg["From"] = gmail_address
-    msg["To"] = to_email
-    msg.attach(MIMEText(text_body, "plain", "utf-8"))
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
-
-    with smtplib.SMTP("smtp.gmail.com", 587, timeout=5) as server:
-        server.starttls()
-        server.login(gmail_address, gmail_app_password)
-        server.send_message(msg)
+    _send_email_transport(
+        to_email=to_email,
+        subject=f"New Lead: {lead_name} ({tenant_id})",
+        text_body=text_body,
+        html_body=html_body,
+    )

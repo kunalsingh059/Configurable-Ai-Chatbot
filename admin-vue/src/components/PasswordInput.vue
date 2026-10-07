@@ -24,7 +24,7 @@ const visible = ref(false);
       :required="required"
       :autocomplete="autocomplete"
       :autofocus="autofocus"
-      class="w-full rounded-lg border border-slate-200 px-3 py-2 pr-10 text-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+      class="w-full rounded-lg border border-slate-200 px-3 py-2 pr-10 text-base sm:text-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
     />
     <button
       type="button"

@@ -10,20 +10,20 @@ const emit = defineEmits(["confirm", "cancel"]);
 </script>
 
 <template>
-  <div v-if="open" class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4">
-    <div class="w-full max-w-sm rounded-2xl bg-white p-5 shadow-lg">
+  <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div class="w-full max-w-sm rounded-2xl bg-white p-4 sm:p-5 shadow-xl">
       <h3 class="text-sm font-semibold text-navy-950">{{ title }}</h3>
-      <p v-if="message" class="mt-2 text-sm text-slate-600">{{ message }}</p>
+      <p v-if="message" class="mt-2 text-xs sm:text-sm text-slate-600 leading-relaxed">{{ message }}</p>
 
-      <div class="mt-5 flex justify-end gap-2">
+      <div class="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
         <button
-          class="rounded-lg px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          class="w-full sm:w-auto rounded-lg px-3.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 text-center transition"
           @click="emit('cancel')"
         >
           Cancel
         </button>
         <button
-          class="rounded-lg px-3 py-2 text-xs font-medium text-white"
+          class="w-full sm:w-auto rounded-lg px-3.5 py-2 text-xs font-medium text-white text-center transition"
           :class="danger ? 'bg-rose-600 hover:bg-rose-700' : 'bg-navy-950 hover:bg-navy-900'"
           @click="emit('confirm')"
         >

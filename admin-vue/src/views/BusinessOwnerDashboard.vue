@@ -24,18 +24,21 @@ function confirmLogout() {
 </script>
 
 <template>
-  <div class="mx-auto max-w-3xl px-4 py-8">
-    <div class="mb-6 flex items-center justify-between">
-      <div>
-        <h1 class="text-lg font-semibold text-navy-950">{{ auth.tenantId }}</h1>
-        <p class="text-sm text-slate-500">Business owner dashboard</p>
+  <div class="mx-auto max-w-3xl px-3 sm:px-4 py-5 sm:py-8">
+    <div class="mb-5 sm:mb-6 flex items-center justify-between gap-3">
+      <div class="min-w-0 flex-1">
+        <h1 class="truncate text-base sm:text-lg font-semibold text-navy-950" :title="auth.tenantId">{{ auth.tenantId }}</h1>
+        <p class="text-xs sm:text-sm text-slate-500">Business owner dashboard</p>
       </div>
-      <button class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-navy-900 hover:border-amber-500" @click="showLogoutConfirm = true">
+      <button
+        class="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 sm:py-2 text-xs font-medium text-navy-900 transition hover:border-amber-500 focus:outline-none"
+        @click="showLogoutConfirm = true"
+      >
         Log out
       </button>
     </div>
 
-    <div class="space-y-5">
+    <div class="space-y-4 sm:space-y-5">
       <AnalyticsOverview />
       <LeadsManager />
       <UnansweredQuestions />

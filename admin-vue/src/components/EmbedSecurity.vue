@@ -82,8 +82,8 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
-    <div class="flex items-start justify-between gap-3">
+  <div class="rounded-2xl bg-white p-4 sm:p-5 shadow-sm ring-1 ring-slate-100">
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h2 class="text-sm font-semibold text-navy-950">Allowed websites</h2>
         <p class="mt-1 text-xs text-slate-500">
@@ -93,7 +93,7 @@ onMounted(load);
       </div>
       <span
         v-if="!isLoading"
-        class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium"
+        class="self-start sm:self-auto shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium"
         :class="isRestricted ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-800'"
       >
         {{ isRestricted ? "Restricted" : "Not restricted" }}
@@ -129,7 +129,7 @@ onMounted(load);
         <button
           type="submit"
           :disabled="isSaving"
-          class="mt-3 rounded-lg bg-navy-950 px-4 py-2 text-xs font-medium text-white hover:bg-navy-900 disabled:opacity-60"
+          class="mt-3 w-full sm:w-auto rounded-lg bg-navy-950 px-4 py-2.5 text-xs font-medium text-white hover:bg-navy-900 disabled:opacity-60 text-center"
         >
           {{ isSaving ? "Saving..." : "Save websites" }}
         </button>
@@ -145,7 +145,7 @@ onMounted(load);
         </p>
         <button
           :disabled="isRotating"
-          class="mt-3 rounded-lg border border-rose-300 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-60"
+          class="mt-3 w-full sm:w-auto rounded-lg border border-rose-300 px-3.5 py-2.5 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-60 text-center"
           @click="showRotateConfirm = true"
         >
           {{ isRotating ? "Generating..." : "Regenerate API key" }}

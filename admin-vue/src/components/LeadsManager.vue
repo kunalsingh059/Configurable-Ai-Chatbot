@@ -119,7 +119,7 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
+  <div class="rounded-2xl bg-white p-4 sm:p-5 shadow-sm ring-1 ring-slate-100">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <div class="flex items-center gap-2">
@@ -136,12 +136,12 @@ onMounted(load);
         </p>
       </div>
 
-      <div class="flex flex-wrap items-center gap-2">
+      <div class="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
         <!-- Filter pills -->
-        <div class="flex shrink-0 items-center gap-1 rounded-lg bg-slate-100 p-0.5 text-xs">
+        <div class="flex shrink-0 items-center gap-1 rounded-lg bg-slate-100 p-0.5 text-xs overflow-x-auto max-w-full">
           <button
             type="button"
-            class="rounded-md px-2.5 py-1 text-[11px] font-medium transition"
+            class="rounded-md px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition"
             :class="statusFilter === 'all' ? 'bg-white text-navy-950 shadow-sm' : 'text-slate-500 hover:text-slate-900'"
             @click="changeFilter('all')"
           >
@@ -149,7 +149,7 @@ onMounted(load);
           </button>
           <button
             type="button"
-            class="rounded-md px-2.5 py-1 text-[11px] font-medium transition"
+            class="rounded-md px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition"
             :class="statusFilter === 'new' ? 'bg-white text-navy-950 shadow-sm' : 'text-slate-500 hover:text-slate-900'"
             @click="changeFilter('new')"
           >
@@ -157,7 +157,7 @@ onMounted(load);
           </button>
           <button
             type="button"
-            class="rounded-md px-2.5 py-1 text-[11px] font-medium transition"
+            class="rounded-md px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition"
             :class="statusFilter === 'contacted' ? 'bg-white text-navy-950 shadow-sm' : 'text-slate-500 hover:text-slate-900'"
             @click="changeFilter('contacted')"
           >
@@ -165,7 +165,7 @@ onMounted(load);
           </button>
           <button
             type="button"
-            class="rounded-md px-2.5 py-1 text-[11px] font-medium transition"
+            class="rounded-md px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition"
             :class="statusFilter === 'closed' ? 'bg-white text-navy-950 shadow-sm' : 'text-slate-500 hover:text-slate-900'"
             @click="changeFilter('closed')"
           >
@@ -177,7 +177,7 @@ onMounted(load);
         <button
           type="button"
           :disabled="isExporting || totalCount === 0"
-          class="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-40"
+          class="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-40 w-full sm:w-auto shrink-0"
           @click="exportCsv"
         >
           <svg class="h-3.5 w-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -207,9 +207,9 @@ onMounted(load);
         :key="lead.id"
         class="py-3.5 first:pt-0 last:pb-0"
       >
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div class="flex-1">
-            <div class="flex items-center gap-2">
+        <div class="flex flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between">
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
               <span class="text-xs font-semibold text-navy-950">{{ lead.name }}</span>
               <span
                 class="rounded-full px-2 py-0.5 text-[10px] font-medium capitalize"
@@ -229,27 +229,27 @@ onMounted(load);
               <a
                 v-if="lead.email"
                 :href="`mailto:${lead.email}`"
-                class="inline-flex items-center gap-1 rounded bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-600 hover:text-navy-900 hover:underline"
+                class="inline-flex items-center gap-1 rounded bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-600 hover:text-navy-900 hover:underline break-all"
               >
                 <span>✉</span> {{ lead.email }}
               </a>
               <a
                 v-if="lead.phone"
                 :href="`tel:${lead.phone}`"
-                class="inline-flex items-center gap-1 rounded bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-600 hover:text-navy-900 hover:underline"
+                class="inline-flex items-center gap-1 rounded bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-600 hover:text-navy-900 hover:underline break-all"
               >
                 <span>📞</span> {{ lead.phone }}
               </a>
             </div>
 
             <!-- Customer Note / Message -->
-            <p v-if="lead.message" class="mt-2 text-xs text-slate-700 bg-slate-50/70 rounded-lg p-2 border border-slate-100">
+            <p v-if="lead.message" class="mt-2 text-xs text-slate-700 bg-slate-50/70 rounded-lg p-2.5 border border-slate-100 break-words">
               <span class="font-medium text-slate-500">Note:</span> {{ lead.message }}
             </p>
           </div>
 
           <!-- Actions & Status Toggle -->
-          <div class="flex shrink-0 items-center gap-2 pt-1 sm:pt-0">
+          <div class="flex shrink-0 items-center gap-2 pt-1 sm:pt-0 self-start sm:self-auto">
             <!-- Transcript Toggle -->
             <button
               v-if="lead.chat_history && lead.chat_history.length > 0"
@@ -280,9 +280,9 @@ onMounted(load);
           v-if="expandedLeadId === lead.id"
           class="mt-3 rounded-xl border border-slate-200/80 bg-slate-50/50 p-3 text-xs"
         >
-          <div class="mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-            <span>Recent conversation context (last {{ lead.chat_history.length }} msgs)</span>
-            <span>Session: {{ lead.session_id }}</span>
+          <div class="mb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+            <span class="truncate">Recent conversation context (last {{ lead.chat_history.length }} msgs)</span>
+            <span class="truncate font-mono text-[10px]">Session: {{ lead.session_id }}</span>
           </div>
 
           <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
@@ -295,7 +295,7 @@ onMounted(load);
               <span class="block text-[10px] font-semibold uppercase tracking-wider" :class="msg.role === 'user' ? 'text-amber-800' : 'text-slate-400'">
                 {{ msg.role === 'user' ? 'Customer' : 'Assistant' }}
               </span>
-              <p class="mt-0.5 text-slate-800 whitespace-pre-wrap">{{ msg.content }}</p>
+              <p class="mt-0.5 text-slate-800 whitespace-pre-wrap break-words">{{ msg.content }}</p>
             </div>
           </div>
         </div>
@@ -305,10 +305,10 @@ onMounted(load);
     <!-- Pagination -->
     <div
       v-if="!isLoading && totalCount > limit"
-      class="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500"
+      class="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500"
     >
-      <span>Page {{ currentPage }} of {{ totalPages }} ({{ totalCount }} total)</span>
-      <div class="flex items-center gap-1">
+      <span class="text-center sm:text-left">Page {{ currentPage }} of {{ totalPages }} ({{ totalCount }} total)</span>
+      <div class="flex items-center justify-center gap-1">
         <button
           type="button"
           :disabled="currentPage <= 1"

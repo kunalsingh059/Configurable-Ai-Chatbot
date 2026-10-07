@@ -62,7 +62,7 @@ async function submit() {
 </script>
 
 <template>
-  <div class="flex min-h-screen w-full items-start justify-center overflow-y-auto px-4 py-10 sm:items-center sm:py-12">
+  <div class="flex min-h-screen w-full items-start justify-center overflow-y-auto px-3.5 py-8 sm:items-center sm:px-4 sm:py-12">
     <div class="w-full max-w-sm">
       <div class="mb-6 text-center sm:mb-8">
         <div
@@ -74,7 +74,7 @@ async function submit() {
         <p class="mt-1 text-sm text-slate-500">A super admin must activate it before you can log in</p>
       </div>
 
-      <div v-if="succeeded" class="rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-slate-100">
+      <div v-if="succeeded" class="rounded-2xl bg-white p-5 sm:p-6 text-center shadow-sm ring-1 ring-slate-100">
         <p class="text-sm text-navy-950">
           Account created. It must be activated by a super admin before you can log in.
         </p>
@@ -83,7 +83,7 @@ async function submit() {
         </router-link>
       </div>
 
-      <form v-else class="space-y-4 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100 sm:p-6" @submit.prevent="submit">
+      <form v-else class="space-y-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100 sm:p-6" @submit.prevent="submit">
         <div>
           <label class="mb-1 block text-xs font-medium text-slate-600">Business Name</label>
           <input
@@ -91,7 +91,7 @@ async function submit() {
             type="text"
             required
             placeholder="e.g. Life Secure Pathology"
-            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-base sm:text-sm outline-none focus:border-amber-500"
           />
         </div>
 
@@ -104,7 +104,7 @@ async function submit() {
             type="text"
             required
             placeholder="life-secure-pathology"
-            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-base sm:text-sm outline-none focus:border-amber-500"
             @input="onTenantIdInput"
           />
           <p class="mt-1 text-[11px] text-slate-400">
@@ -118,7 +118,7 @@ async function submit() {
             v-model="username"
             type="text"
             required
-            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-base sm:text-sm outline-none focus:border-amber-500"
           />
         </div>
         <div>
@@ -129,7 +129,7 @@ async function submit() {
             v-model="email"
             type="email"
             required
-            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
+            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-base sm:text-sm outline-none focus:border-amber-500"
           />
         </div>
         <div>

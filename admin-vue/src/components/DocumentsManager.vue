@@ -64,13 +64,13 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
-    <div class="mb-4 flex items-center justify-between">
-      <div>
+  <div class="rounded-2xl bg-white p-4 sm:p-5 shadow-sm ring-1 ring-slate-100">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <div class="min-w-0">
         <h2 class="text-sm font-semibold text-navy-950">Documents</h2>
         <p class="text-xs text-slate-500">FAQs, policies, or menus your assistant can reference.</p>
       </div>
-      <label class="cursor-pointer rounded-lg bg-navy-950 px-3 py-2 text-xs font-medium text-white hover:bg-navy-900">
+      <label class="shrink-0 cursor-pointer rounded-lg bg-navy-950 px-3.5 py-2 text-xs font-medium text-white hover:bg-navy-900">
         {{ isUploading ? "Uploading..." : "Upload" }}
         <input ref="fileInput" type="file" class="hidden" :disabled="isUploading" @change="onFileChange" />
       </label>
@@ -84,10 +84,10 @@ onMounted(load);
     </div>
 
     <ul v-else class="divide-y divide-slate-100">
-      <li v-for="doc in documents" :key="doc.id" class="flex items-center justify-between py-3">
-        <p class="truncate text-sm font-medium text-navy-950">{{ doc.name }}</p>
+      <li v-for="doc in documents" :key="doc.id" class="flex items-center justify-between gap-3 py-3">
+        <p class="min-w-0 flex-1 truncate text-sm font-medium text-navy-950" :title="doc.name">{{ doc.name }}</p>
         <button
-          class="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-rose-600 hover:border-rose-300"
+          class="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-rose-600 transition hover:border-rose-300"
           @click="askDelete(doc)"
         >
           Delete

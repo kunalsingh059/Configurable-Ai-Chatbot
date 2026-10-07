@@ -61,7 +61,7 @@ async function submit() {
 </script>
 
 <template>
-  <div class="flex min-h-screen w-full items-start justify-center overflow-y-auto px-4 py-10 sm:items-center sm:py-12">
+  <div class="flex min-h-screen w-full items-start justify-center overflow-y-auto px-3.5 py-8 sm:items-center sm:px-4 sm:py-12">
     <div class="w-full max-w-sm">
       <div class="mb-6 text-center sm:mb-8">
         <div
@@ -72,14 +72,14 @@ async function submit() {
         <h1 class="text-lg font-semibold text-navy-950">Choose a new password</h1>
       </div>
 
-      <div v-if="succeeded" class="rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-slate-100">
+      <div v-if="succeeded" class="rounded-2xl bg-white p-5 sm:p-6 text-center shadow-sm ring-1 ring-slate-100">
         <p class="text-sm text-navy-950">Your password has been updated.</p>
         <router-link to="/login" class="mt-4 inline-block text-sm font-medium text-amber-600 hover:underline">
           Log in now
         </router-link>
       </div>
 
-      <form v-else class="space-y-4 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100 sm:p-6" @submit.prevent="submit">
+      <form v-else class="space-y-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100 sm:p-6" @submit.prevent="submit">
         <div>
           <label class="mb-1 block text-xs font-medium text-slate-600">New password</label>
           <PasswordInput v-model="newPassword" required autofocus autocomplete="new-password" />

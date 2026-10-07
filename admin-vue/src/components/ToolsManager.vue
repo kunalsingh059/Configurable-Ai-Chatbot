@@ -221,14 +221,14 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
-    <div class="mb-4 flex items-center justify-between">
-      <div>
+  <div class="rounded-2xl bg-white p-4 sm:p-5 shadow-sm ring-1 ring-slate-100">
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <div class="min-w-0">
         <h2 class="text-sm font-semibold text-navy-950">Tools</h2>
         <p class="text-xs text-slate-500">Live APIs your assistant can call to answer questions.</p>
       </div>
       <button
-        class="rounded-lg bg-navy-950 px-3 py-2 text-xs font-medium text-white hover:bg-navy-900"
+        class="shrink-0 rounded-lg bg-navy-950 px-3 py-2 text-xs font-medium text-white hover:bg-navy-900"
         @click="openCreate"
       >
         Add tool
@@ -243,15 +243,15 @@ onMounted(load);
     </div>
 
     <ul v-else class="divide-y divide-slate-100">
-      <li v-for="tool in tools" :key="tool.id" class="flex items-center justify-between py-3">
-        <div class="min-w-0">
+      <li v-for="tool in tools" :key="tool.id" class="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between py-3">
+        <div class="min-w-0 flex-1">
           <p class="truncate text-sm font-medium text-navy-950">{{ tool.name }}</p>
-          <p class="truncate text-xs text-slate-500">{{ tool.method }} {{ tool.url_template }}</p>
+          <p class="truncate text-xs font-mono text-slate-500">{{ tool.method }} {{ tool.url_template }}</p>
           <p v-if="tool.response_fields && tool.response_fields.length" class="truncate text-[11px] text-amber-600">
             Fields: {{ tool.response_fields.join(", ") }}
           </p>
         </div>
-        <div class="flex shrink-0 items-center gap-2">
+        <div class="flex shrink-0 items-center gap-2 self-start sm:self-auto">
           <button
             class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-navy-900 hover:border-amber-500"
             @click="openEdit(tool)"
@@ -269,8 +269,8 @@ onMounted(load);
     </ul>
 
     <!-- Create / edit tool modal -->
-    <div v-if="showForm" class="fixed inset-0 z-10 flex items-center justify-center bg-black/40 px-4 py-6">
-      <div class="max-h-full w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-lg">
+    <div v-if="showForm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-4 overflow-y-auto">
+      <div class="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-4 sm:p-6 shadow-xl">
         <h3 class="mb-4 text-sm font-semibold text-navy-950">
           {{ editingId ? "Edit tool" : "Add tool" }}
         </h3>
@@ -283,14 +283,14 @@ onMounted(load);
             <label class="mb-1 block text-xs font-medium text-slate-600">Description (tells the AI when to use it)</label>
             <textarea v-model="form.description" required rows="2" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"></textarea>
           </div>
-          <div class="grid grid-cols-3 gap-2">
-            <div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div class="sm:col-span-1">
               <label class="mb-1 block text-xs font-medium text-slate-600">Method</label>
               <select v-model="form.method" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500">
                 <option v-for="m in ['GET', 'POST', 'PUT', 'DELETE']" :key="m">{{ m }}</option>
               </select>
             </div>
-            <div class="col-span-2">
+            <div class="sm:col-span-2">
               <label class="mb-1 block text-xs font-medium text-slate-600">URL template</label>
               <input v-model="form.url_template" required placeholder="https://api.example.com/products/{id}" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500" />
             </div>
@@ -330,23 +330,20 @@ onMounted(load);
 
           <p v-if="formError" class="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">{{ formError }}</p>
 
-          <!-- Test panel: runs the exact same request the AI would make,
-               with sample values you type in here, so you can confirm the
-               live API actually works before saving or handing this to a
-               real customer conversation. -->
+          <!-- Test panel: runs the exact same request the AI would make -->
           <div class="rounded-xl border border-slate-200 p-3">
             <p class="mb-2 text-xs font-medium text-slate-600">Test this tool live</p>
-            <div class="flex items-start gap-2">
+            <div class="flex flex-col sm:flex-row items-stretch sm:items-start gap-2">
               <textarea
                 v-model="testParams"
                 rows="2"
                 placeholder='{"barcode": "3017624010701"}'
-                class="flex-1 rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs outline-none focus:border-amber-500"
+                class="w-full sm:flex-1 rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs outline-none focus:border-amber-500"
               ></textarea>
               <button
                 type="button"
                 :disabled="isTesting"
-                class="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-navy-900 hover:border-amber-500 disabled:opacity-60"
+                class="w-full sm:w-auto shrink-0 rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-medium text-navy-900 hover:border-amber-500 disabled:opacity-60 text-center"
                 @click="runTest"
               >
                 {{ isTesting ? "Running..." : "Run test" }}
@@ -365,9 +362,9 @@ onMounted(load);
             </div>
           </div>
 
-          <div class="flex justify-end gap-2 pt-2">
-            <button type="button" class="rounded-lg px-3 py-2 text-xs font-medium text-slate-600" @click="showForm = false">Cancel</button>
-            <button type="submit" :disabled="isSubmitting" class="rounded-lg bg-navy-950 px-3 py-2 text-xs font-medium text-white hover:bg-navy-900 disabled:opacity-60">
+          <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
+            <button type="button" class="w-full sm:w-auto rounded-lg px-4 py-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 text-center" @click="showForm = false">Cancel</button>
+            <button type="submit" :disabled="isSubmitting" class="w-full sm:w-auto rounded-lg bg-navy-950 px-4 py-2.5 text-xs font-medium text-white hover:bg-navy-900 disabled:opacity-60 text-center">
               {{ isSubmitting ? "Saving..." : editingId ? "Save changes" : "Save tool" }}
             </button>
           </div>

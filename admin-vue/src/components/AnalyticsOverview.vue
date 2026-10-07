@@ -74,7 +74,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
+  <div class="rounded-2xl bg-white p-4 sm:p-5 shadow-sm ring-1 ring-slate-100">
     <!-- Header -->
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
@@ -92,7 +92,7 @@ onMounted(() => {
         </p>
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
         <!-- Range toggle pills -->
         <div class="flex shrink-0 items-center gap-1 rounded-lg bg-slate-100 p-0.5 text-xs">
           <button
@@ -138,15 +138,15 @@ onMounted(() => {
     </p>
 
     <!-- Loading Skeleton -->
-    <div v-if="isLoading" class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div v-if="isLoading" class="mt-4 grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-4">
       <div v-for="i in 4" :key="i" class="h-20 animate-pulse rounded-xl bg-slate-50" />
     </div>
 
-    <div v-else class="mt-4 space-y-5">
+    <div v-else class="mt-4 space-y-4 sm:space-y-5">
       <!-- 4 Main Tiles -->
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div class="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-4">
         <!-- Conversations Tile -->
-        <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-3.5 transition hover:border-slate-200">
+        <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:p-3.5 transition hover:border-slate-200">
           <div class="flex items-center justify-between text-slate-500">
             <span class="text-xs font-medium">Conversations</span>
             <svg class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -154,15 +154,15 @@ onMounted(() => {
             </svg>
           </div>
           <div class="mt-2 flex items-baseline gap-1.5">
-            <span class="text-xl font-bold tracking-tight text-navy-950">
+            <span class="text-lg sm:text-xl font-bold tracking-tight text-navy-950">
               {{ tiles.conversations.toLocaleString() }}
             </span>
           </div>
-          <p class="mt-0.5 text-[11px] text-slate-400">Distinct sessions</p>
+          <p class="mt-0.5 text-[10px] sm:text-[11px] text-slate-400">Distinct sessions</p>
         </div>
 
         <!-- Messages Tile -->
-        <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-3.5 transition hover:border-slate-200">
+        <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:p-3.5 transition hover:border-slate-200">
           <div class="flex items-center justify-between text-slate-500">
             <span class="text-xs font-medium">Messages</span>
             <svg class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -170,15 +170,15 @@ onMounted(() => {
             </svg>
           </div>
           <div class="mt-2 flex items-baseline gap-1.5">
-            <span class="text-xl font-bold tracking-tight text-navy-950">
+            <span class="text-lg sm:text-xl font-bold tracking-tight text-navy-950">
               {{ tiles.messages.toLocaleString() }}
             </span>
           </div>
-          <p class="mt-0.5 text-[11px] text-slate-400">Total exchanges</p>
+          <p class="mt-0.5 text-[10px] sm:text-[11px] text-slate-400">Total exchanges</p>
         </div>
 
         <!-- Satisfaction Tile -->
-        <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-3.5 transition hover:border-slate-200">
+        <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:p-3.5 transition hover:border-slate-200">
           <div class="flex items-center justify-between text-slate-500">
             <span class="text-xs font-medium">Satisfaction</span>
             <svg class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -186,11 +186,11 @@ onMounted(() => {
             </svg>
           </div>
           <div class="mt-2 flex items-baseline gap-1.5">
-            <span class="text-xl font-bold tracking-tight text-navy-950">
+            <span class="text-lg sm:text-xl font-bold tracking-tight text-navy-950">
               {{ tiles.satisfaction_pct != null ? `${tiles.satisfaction_pct}%` : "—" }}
             </span>
           </div>
-          <p class="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+          <p class="mt-0.5 flex flex-wrap items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] text-slate-500">
             <span class="text-emerald-700 font-medium">👍 {{ tiles.thumbs_up }}</span>
             <span class="text-slate-300">·</span>
             <span class="text-rose-600 font-medium">👎 {{ tiles.thumbs_down }}</span>
@@ -198,7 +198,7 @@ onMounted(() => {
         </div>
 
         <!-- Unanswered Tile -->
-        <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-3.5 transition hover:border-slate-200">
+        <div class="rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:p-3.5 transition hover:border-slate-200">
           <div class="flex items-center justify-between text-slate-500">
             <span class="text-xs font-medium">Unanswered</span>
             <svg class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -207,21 +207,21 @@ onMounted(() => {
           </div>
           <div class="mt-2 flex items-baseline gap-1.5">
             <span
-              class="text-xl font-bold tracking-tight"
+              class="text-lg sm:text-xl font-bold tracking-tight"
               :class="tiles.unanswered_open > 0 ? 'text-amber-800' : 'text-navy-950'"
             >
               {{ tiles.unanswered_open }}
             </span>
           </div>
-          <p class="mt-0.5 text-[11px]" :class="tiles.unanswered_open > 0 ? 'text-amber-800 font-medium' : 'text-slate-400'">
+          <p class="mt-0.5 text-[10px] sm:text-[11px]" :class="tiles.unanswered_open > 0 ? 'text-amber-800 font-medium' : 'text-slate-400'">
             {{ tiles.unanswered_open > 0 ? 'Open questions' : 'Zero unhandled' }}
           </p>
         </div>
       </div>
 
       <!-- Activity Trend Chart (reads from usage_daily) -->
-      <div class="rounded-xl border border-slate-100 bg-slate-50/30 p-4">
-        <div class="mb-3 flex items-center justify-between">
+      <div class="rounded-xl border border-slate-100 bg-slate-50/30 p-3.5 sm:p-4">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-1">
           <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-500">
             Daily Activity Trend (Messages & Conversations)
           </h3>
@@ -236,15 +236,16 @@ onMounted(() => {
 
         <div v-else class="space-y-2">
           <!-- Responsive CSS Bar Columns -->
-          <div class="flex h-32 items-end gap-1 sm:gap-2 pt-4">
+          <div class="flex h-32 items-end gap-0.5 sm:gap-1.5 pt-4">
             <div
-              v-for="day in dailySeries"
+              v-for="(day, idx) in dailySeries"
               :key="day.date"
               class="group relative flex flex-1 flex-col items-center h-full justify-end"
             >
               <!-- Hover Tooltip -->
               <div
-                class="pointer-events-none absolute -top-10 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-navy-950 px-2 py-1 text-[10px] text-white shadow-lg group-hover:block"
+                class="pointer-events-none absolute -top-10 z-20 hidden whitespace-nowrap rounded-md bg-navy-950 px-2 py-1 text-[10px] text-white shadow-lg group-hover:block"
+                :class="idx === 0 ? 'left-0' : idx === dailySeries.length - 1 ? 'right-0' : 'left-1/2 -translate-x-1/2'"
               >
                 {{ formatShortDate(day.date) }}: {{ day.messages }} msgs, {{ day.conversations }} convs
               </div>

@@ -89,7 +89,7 @@ async function copySnippet() {
 </script>
 
 <template>
-  <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
+  <div class="rounded-2xl bg-white p-4 sm:p-5 shadow-sm ring-1 ring-slate-100">
     <h2 class="text-sm font-semibold text-navy-950">Your widget</h2>
     <p class="mt-1 text-xs text-slate-500">
       This key identifies your business to the chat widget. Don't share it publicly outside your own site.
@@ -97,8 +97,8 @@ async function copySnippet() {
 
     <div class="mt-4">
       <label class="mb-1 block text-xs font-medium text-slate-600">API key</label>
-      <div class="flex items-center gap-2">
-        <code class="flex-1 truncate rounded-lg bg-slate-50 px-3 py-2 text-xs text-navy-900 ring-1 ring-slate-200">
+      <div class="flex items-center gap-2 min-w-0">
+        <code class="min-w-0 flex-1 truncate rounded-lg bg-slate-50 px-3 py-2 text-xs font-mono text-navy-900 ring-1 ring-slate-200">
           {{ apiKey }}
         </code>
         <button
@@ -118,9 +118,9 @@ async function copySnippet() {
 
     <div class="mt-4">
       <label class="mb-1 block text-xs font-medium text-slate-600">Embed snippet</label>
-      <pre class="overflow-x-auto rounded-lg bg-navy-950 px-3 py-3 text-[11px] leading-relaxed text-white/90"><code>{{ embedSnippet }}</code></pre>
+      <pre class="overflow-x-auto rounded-lg bg-navy-950 p-3 text-[11px] leading-relaxed text-white/90"><code>{{ embedSnippet }}</code></pre>
       <button
-        class="mt-2 flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition"
+        class="mt-2.5 flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-xs font-medium transition w-full sm:w-auto"
         :class="copiedSnippet
           ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
           : 'border-slate-200 text-navy-900 hover:border-amber-500'"

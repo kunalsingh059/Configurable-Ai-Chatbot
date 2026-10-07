@@ -77,8 +77,8 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
-    <div class="flex items-start justify-between gap-3">
+  <div class="rounded-2xl bg-white p-4 sm:p-5 shadow-sm ring-1 ring-slate-100">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <div class="flex items-center gap-2">
           <h2 class="text-sm font-semibold text-navy-950">Unanswered questions</h2>
@@ -95,10 +95,10 @@ onMounted(load);
       </div>
 
       <!-- Filter pills -->
-      <div class="flex shrink-0 items-center gap-1 rounded-lg bg-slate-100 p-0.5 text-xs">
+      <div class="flex shrink-0 items-center gap-1 rounded-lg bg-slate-100 p-0.5 text-xs overflow-x-auto max-w-full">
         <button
           type="button"
-          class="rounded-md px-2.5 py-1 text-[11px] font-medium transition"
+          class="rounded-md px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition"
           :class="statusFilter === 'open' ? 'bg-white text-navy-950 shadow-sm' : 'text-slate-500 hover:text-slate-900'"
           @click="changeFilter('open')"
         >
@@ -106,7 +106,7 @@ onMounted(load);
         </button>
         <button
           type="button"
-          class="rounded-md px-2.5 py-1 text-[11px] font-medium transition"
+          class="rounded-md px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition"
           :class="statusFilter === 'resolved' ? 'bg-white text-navy-950 shadow-sm' : 'text-slate-500 hover:text-slate-900'"
           @click="changeFilter('resolved')"
         >
@@ -114,7 +114,7 @@ onMounted(load);
         </button>
         <button
           type="button"
-          class="rounded-md px-2.5 py-1 text-[11px] font-medium transition"
+          class="rounded-md px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition"
           :class="statusFilter === 'all' ? 'bg-white text-navy-950 shadow-sm' : 'text-slate-500 hover:text-slate-900'"
           @click="changeFilter('all')"
         >
@@ -137,13 +137,13 @@ onMounted(load);
       <li
         v-for="item in items"
         :key="item.id"
-        class="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"
+        class="flex flex-col gap-2.5 py-3 sm:flex-row sm:items-center sm:justify-between"
       >
         <div class="min-w-0 flex-1">
           <p class="text-sm font-medium text-navy-950 break-words">
             "{{ item.question }}"
           </p>
-          <div class="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
+          <div class="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
             <span>{{ formatDate(item.timestamp) }}</span>
             <span>&bull;</span>
             <span
@@ -160,7 +160,7 @@ onMounted(load);
           </div>
         </div>
 
-        <div class="flex shrink-0 items-center gap-2 pt-1 sm:pt-0">
+        <div class="flex shrink-0 items-center gap-2 pt-1 sm:pt-0 self-start sm:self-auto">
           <button
             v-if="item.status === 'open'"
             type="button"
@@ -195,10 +195,10 @@ onMounted(load);
     <!-- Pagination -->
     <div
       v-if="totalPages > 1"
-      class="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500"
+      class="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t border-slate-100 pt-3 text-xs text-slate-500"
     >
-      <span>Page {{ currentPage }} of {{ totalPages }}</span>
-      <div class="flex gap-1.5">
+      <span class="text-center sm:text-left">Page {{ currentPage }} of {{ totalPages }}</span>
+      <div class="flex items-center justify-center gap-1.5">
         <button
           type="button"
           :disabled="currentPage <= 1 || isLoading"

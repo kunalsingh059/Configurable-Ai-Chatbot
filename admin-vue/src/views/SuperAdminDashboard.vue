@@ -109,15 +109,15 @@ onMounted(load);
       side-by-side from sm: up, so long names/business IDs stay readable.
     - Tap targets are at least ~40px tall on phones.
   -->
-  <div class="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6 sm:py-8 md:max-w-3xl">
+  <div class="mx-auto w-full max-w-2xl px-3 py-5 sm:px-6 sm:py-8 md:max-w-3xl">
     <!-- Header -->
     <div class="mb-5 flex items-start justify-between gap-3 sm:mb-6 sm:items-center">
-      <div class="min-w-0">
+      <div class="min-w-0 flex-1">
         <h1 class="text-lg font-semibold text-navy-950 sm:text-xl">Business owners</h1>
-        <p class="mt-0.5 text-sm text-slate-500">Activate accounts to let them use the platform.</p>
+        <p class="mt-0.5 text-xs sm:text-sm text-slate-500">Activate accounts to let them use the platform.</p>
       </div>
       <button
-        class="min-h-[40px] shrink-0 whitespace-nowrap rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-medium text-navy-900 transition hover:border-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 active:bg-slate-50 sm:text-sm"
+        class="min-h-[38px] shrink-0 whitespace-nowrap rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-medium text-navy-900 transition hover:border-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 active:bg-slate-50 sm:text-sm"
         @click="showLogoutConfirm = true"
       >
         Log out
@@ -126,17 +126,17 @@ onMounted(load);
 
     <!-- Stats -->
     <div v-if="!isLoading && totalCount > 0" class="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
-      <div class="min-w-0 rounded-2xl bg-white p-3 text-center shadow-sm ring-1 ring-slate-100 sm:p-4">
-        <p class="text-xl font-semibold text-navy-950 sm:text-2xl">{{ totalCount }}</p>
-        <p class="text-xs text-slate-500">Total</p>
+      <div class="min-w-0 rounded-2xl bg-white p-2.5 sm:p-4 text-center shadow-sm ring-1 ring-slate-100">
+        <p class="text-lg font-semibold text-navy-950 sm:text-2xl">{{ totalCount }}</p>
+        <p class="text-[11px] sm:text-xs text-slate-500">Total</p>
       </div>
-      <div class="min-w-0 rounded-2xl bg-white p-3 text-center shadow-sm ring-1 ring-slate-100 sm:p-4">
-        <p class="text-xl font-semibold text-emerald-600 sm:text-2xl">{{ activeCount }}</p>
-        <p class="text-xs text-slate-500">Active</p>
+      <div class="min-w-0 rounded-2xl bg-white p-2.5 sm:p-4 text-center shadow-sm ring-1 ring-slate-100">
+        <p class="text-lg font-semibold text-emerald-600 sm:text-2xl">{{ activeCount }}</p>
+        <p class="text-[11px] sm:text-xs text-slate-500">Active</p>
       </div>
-      <div class="min-w-0 rounded-2xl bg-white p-3 text-center shadow-sm ring-1 ring-slate-100 sm:p-4">
-        <p class="text-xl font-semibold text-amber-600 sm:text-2xl">{{ pendingCount }}</p>
-        <p class="text-xs text-slate-500">Pending</p>
+      <div class="min-w-0 rounded-2xl bg-white p-2.5 sm:p-4 text-center shadow-sm ring-1 ring-slate-100">
+        <p class="text-lg font-semibold text-amber-600 sm:text-2xl">{{ pendingCount }}</p>
+        <p class="text-[11px] sm:text-xs text-slate-500">Pending</p>
       </div>
     </div>
 
@@ -162,7 +162,7 @@ onMounted(load);
               v-model="searchQuery"
               type="text"
               placeholder="Search by name or business..."
-              class="min-h-[44px] w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-base outline-none focus:border-amber-500 sm:text-sm"
+              class="min-h-[42px] w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-amber-500"
             />
           </div>
           <!-- Filter pills: stretch to fill the row on phones, natural width from md: up -->
@@ -170,7 +170,7 @@ onMounted(load);
             <button
               v-for="opt in [{ key: 'all', label: 'All' }, { key: 'active', label: 'Active' }, { key: 'pending', label: 'Pending' }]"
               :key="opt.key"
-              class="min-h-[40px] rounded-lg px-3 py-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 md:min-h-0"
+              class="min-h-[38px] rounded-lg px-3 py-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 md:min-h-0"
               :class="statusFilter === opt.key ? 'bg-navy-950 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'"
               @click="statusFilter = opt.key"
             >
@@ -190,11 +190,11 @@ onMounted(load);
             :key="owner.id"
             class="flex flex-col gap-2.5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
           >
-            <div class="min-w-0">
+            <div class="min-w-0 flex-1">
               <p class="truncate text-sm font-medium text-navy-950">{{ owner.username }}</p>
-              <p class="truncate text-xs text-slate-500">{{ owner.tenant_id }}</p>
+              <p class="truncate text-xs text-slate-500 font-mono">{{ owner.tenant_id }}</p>
             </div>
-            <div class="flex shrink-0 items-center justify-between gap-3 sm:justify-end">
+            <div class="flex shrink-0 items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
               <span
                 class="rounded-full px-2.5 py-0.5 text-[11px] font-medium"
                 :class="owner.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'"
@@ -203,7 +203,7 @@ onMounted(load);
               </span>
               <button
                 :disabled="pendingId === owner.id"
-                class="min-h-[40px] whitespace-nowrap rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-medium text-navy-900 transition hover:border-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 active:bg-slate-50 disabled:opacity-50 sm:min-h-0"
+                class="min-h-[38px] whitespace-nowrap rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-medium text-navy-900 transition hover:border-amber-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 active:bg-slate-50 disabled:opacity-50 sm:min-h-0"
                 @click="toggle(owner)"
               >
                 {{ owner.is_active ? "Deactivate" : "Activate" }}

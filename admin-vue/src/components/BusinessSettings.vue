@@ -114,8 +114,8 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
-    <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+  <div class="rounded-2xl bg-white p-4 sm:p-5 shadow-sm ring-1 ring-slate-100">
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100 pb-3">
       <div>
         <h2 class="text-sm font-semibold text-navy-950">Chatbot Appearance & Personality</h2>
         <p class="mt-0.5 text-xs text-slate-500">
@@ -124,7 +124,7 @@ onMounted(load);
       </div>
       <span
         v-if="!isLoading"
-        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
+        class="self-start sm:self-auto inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
         :style="{ backgroundColor: `${primaryColor}15`, color: primaryColor }"
       >
         <span class="h-2 w-2 rounded-full" :style="{ backgroundColor: primaryColor }" />
@@ -201,19 +201,19 @@ onMounted(load);
 
         <div>
           <label class="block text-xs font-medium text-slate-700">Avatar Image URL (HTTPS)</label>
-          <div class="mt-1 flex items-center gap-2">
+          <div class="mt-1 flex items-center gap-2 min-w-0">
             <input
               v-model="avatarUrl"
               type="url"
               maxlength="500"
               placeholder="https://example.com/logo.png"
-              class="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
+              class="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-amber-500"
             />
             <img
               v-if="avatarUrl && avatarUrl.startsWith('https://')"
               :src="avatarUrl"
               alt="Avatar preview"
-              class="h-9 w-9 rounded-lg border border-slate-200 object-cover"
+              class="h-9 w-9 shrink-0 rounded-lg border border-slate-200 object-cover"
               @error="(e) => (e.target.style.display = 'none')"
             />
           </div>
@@ -254,7 +254,7 @@ onMounted(load);
             :key="index"
             class="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-navy-950 shadow-sm"
           >
-            <span>{{ chip }}</span>
+            <span class="break-words">{{ chip }}</span>
             <button
               type="button"
               class="text-slate-400 hover:text-rose-500"
@@ -267,18 +267,18 @@ onMounted(load);
         </div>
 
         <!-- Add chip input -->
-        <div v-if="quickReplies.length < 6" class="mt-2 flex items-center gap-2">
+        <div v-if="quickReplies.length < 6" class="mt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <input
             v-model="newQuickReply"
             type="text"
             maxlength="40"
             placeholder="e.g. Check appointment status"
-            class="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-amber-500"
+            class="w-full sm:flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-amber-500"
             @keydown.enter.prevent="addQuickReply"
           />
           <button
             type="button"
-            class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-amber-500"
+            class="w-full sm:w-auto shrink-0 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-700 hover:border-amber-500 text-center"
             @click="addQuickReply"
           >
             + Add suggestion
@@ -295,7 +295,7 @@ onMounted(load);
         <button
           type="submit"
           :disabled="isSaving"
-          class="rounded-lg bg-navy-950 px-5 py-2 text-xs font-medium text-white shadow-sm hover:bg-navy-900 disabled:opacity-60"
+          class="w-full sm:w-auto rounded-lg bg-navy-950 px-5 py-2.5 text-xs font-medium text-white shadow-sm hover:bg-navy-900 disabled:opacity-60 text-center"
         >
           {{ isSaving ? "Saving changes..." : "Save Bot Settings" }}
         </button>

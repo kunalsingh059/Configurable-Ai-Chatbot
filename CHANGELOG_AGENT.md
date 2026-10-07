@@ -186,7 +186,8 @@ This document tracks all changes, architecture decisions, new collections/indexe
     - Status query index: `[("tenant_id", 1), ("status", 1), ("created_at", -1)]`
 - **Security & Reliability:**
   - Strict per-IP rate limit: 3/hour prevents spam while allowing legitimate customers to submit inquiries.
-  - Lead persistence is decoupled from email delivery: if SMTP is offline or credentials are missing, the lead is safely saved in MongoDB.
+  - Lead persistence is decoupled from email delivery: if SMTP is offline or credentials are missing, the lead is safely saved in MongoDB. Owner email sending runs non-blocking via `asyncio.to_thread` with a 5s socket timeout so lead creation response time is never delayed by network SMTP roundtrips.
   - CSV Formula Injection defense: Neutralizes formula prefixes (`=`, `+`, `-`, `@`, `\t`, `\r`) with quote escapes.
+  - Unanswered question detection normalizes curly apostrophes (`’`, `‘`) and includes `reason` in the persisted document.
 
 

@@ -831,11 +831,12 @@ async def chat(req: ChatRequest, tenant_id: str = Depends(get_tenant_from_api_ke
                     if event.get("is_fallback"):
                         unanswered_reason = "system_fallback"
                     elif not event.get("tools_called_count") and not event.get("has_doc_context"):
-                        bot_text = (event.get("text") or "").lower()
+                        bot_text = (event.get("text") or "").lower().replace("’", "'").replace("‘", "'")
                         markers = [
                             "don't have", "do not have", "cannot find", "can't find",
                             "not able to find", "don't have access", "no information",
                             "unable to assist", "no specific information", "don't know",
+                            "cannot help with", "can't help with", "unable to help with",
                         ]
                         user_q = req.message.strip().lower()
                         greetings = {"hi", "hello", "hey", "good morning", "good evening", "good afternoon", "thank you", "thanks", "bye", "ok", "okay"}
@@ -975,6 +976,7 @@ async def log_unanswered_question(tenant_id: str, question: str, session_id: str
             "tenant_id": tenant_id,
             "question": question.strip(),
             "session_id": session_id,
+            "reason": reason,
             "timestamp": now,
             "created_at": now,
             "status": "open",
@@ -1535,19 +1537,22 @@ async def create_handoff_lead(
     result = await leads_collection.insert_one(lead_doc)
     lead_id = str(result.inserted_id)
 
-    # 5. Best-effort owner email notification (saved even if email fails)
+    # 5. Best-effort owner email notification (saved even if email fails, non-blocking)
     if owner and owner.get("email"):
-        try:
-            send_lead_notification_email(
-                to_email=owner["email"],
-                tenant_id=tenant_id,
-                lead_name=req.name,
-                lead_email=req.email,
-                lead_phone=req.phone,
-                lead_message=req.message,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to send lead email notification to {owner.get('email')}: {e}")
+        def _send_lead_email():
+            try:
+                send_lead_notification_email(
+                    to_email=owner["email"],
+                    tenant_id=tenant_id,
+                    lead_name=req.name,
+                    lead_email=req.email,
+                    lead_phone=req.phone,
+                    lead_message=req.message,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send lead email notification to {owner.get('email')}: {e}")
+
+        asyncio.create_task(asyncio.to_thread(_send_lead_email))
 
     return {
         "status": "ok",

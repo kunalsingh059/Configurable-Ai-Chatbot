@@ -221,7 +221,7 @@ def send_lead_notification_email(
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+    with smtplib.SMTP("smtp.gmail.com", 587, timeout=5) as server:
         server.starttls()
         server.login(gmail_address, gmail_app_password)
         server.send_message(msg)

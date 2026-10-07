@@ -68,7 +68,8 @@ This document tracks all changes, architecture decisions, new collections/indexe
   - `app/groq_client.py`: Added `LANGUAGE_PROMPT_INSTRUCTION` (handling English, Hindi Devanagari, and Hinglish in Latin script while locking down entity names, prices, and parameters), `TONE_INSTRUCTIONS`, and `build_system_prompt()`.
   - `app/mock_llm.py`: Added `bot_config` parameter support.
   - `app/main.py`: Retrieved tenant `bot_config` and forwarded it to `run_groq_chat_turn_stream`.
-  - `tests/test_t3_multilanguage.py`: Unit tests validating script-matching prompt injection, disabling via `reply_in_user_language=False`, and tone adaptations.
+  - `tests/test_t3_multilanguage.py`: Unit tests validating script-matching prompt injection and tone adaptations.
+- **Simplification Note:** Removed redundant UI toggle `reply_in_user_language`. Multi-language understanding and script mirroring (English, Hindi, Hinglish, Urdu, etc.) are now seamlessly built-in by default in the system prompt without cluttering business owner settings.
 - **Performance & Latency:**
   - 0 additional network requests, 0 latency overhead. Groq natively generates multilingual responses.
 

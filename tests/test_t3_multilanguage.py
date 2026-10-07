@@ -9,14 +9,6 @@ class TestMultiLanguageAndTone(unittest.TestCase):
         self.assertIn("Devanagari", prompt)
         self.assertIn("Tone: Maintain a warm, friendly", prompt)
 
-    def test_reply_in_user_language_disabled(self):
-        prompt = build_system_prompt(
-            tenant_tools=[],
-            documents_context="",
-            bot_config={"reply_in_user_language": False}
-        )
-        self.assertNotIn("Language and Script Style Guidelines", prompt)
-
     def test_tone_customization(self):
         prompt_prof = build_system_prompt(
             tenant_tools=[],

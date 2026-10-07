@@ -81,7 +81,7 @@ class BotConfigModel(BaseModel):
     avatar_url: Optional[str] = Field(None, max_length=500)
     tone: Optional[str] = Field("friendly", pattern="^(friendly|professional|casual)$")
     quick_replies: list[str] = Field(default_factory=list, max_length=6)
-    reply_in_user_language: bool = True
+    reply_in_user_language: Optional[bool] = None
     handoff_enabled: bool = False
 
     @field_validator("quick_replies")

@@ -1244,7 +1244,6 @@ async def get_bot_config(tenant_id: str = Depends(get_current_business_owner)):
         "avatar_url": bot_config.get("avatar_url"),
         "tone": bot_config.get("tone") or "friendly",
         "quick_replies": bot_config.get("quick_replies") or [],
-        "reply_in_user_language": bot_config.get("reply_in_user_language", True),
         "handoff_enabled": bool(bot_config.get("handoff_enabled", False)),
     }
 

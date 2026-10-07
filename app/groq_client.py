@@ -105,9 +105,8 @@ def build_system_prompt(
     if tone in TONE_INSTRUCTIONS:
         prompt += TONE_INSTRUCTIONS[tone]
 
-    reply_in_user_lang = config.get("reply_in_user_language", True)
-    if reply_in_user_lang:
-        prompt += LANGUAGE_PROMPT_INSTRUCTION
+    # Multilingual script & language mirroring is always built-in by default
+    prompt += LANGUAGE_PROMPT_INSTRUCTION
 
     prompt += build_capabilities_note(tenant_tools, documents_context)
     if documents_context:

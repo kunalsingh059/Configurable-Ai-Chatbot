@@ -513,10 +513,12 @@ async def forgot_password(payload: ForgotPasswordModel, request: Request):
     if user is not None:
         token = create_reset_token(user)
         reset_link = f"{FRONTEND_RESET_URL}?token={token}"
-        try:
-            send_password_reset_email(payload.email, reset_link)
-        except Exception as e:
-            logger.error(f"Failed to send password reset email to {payload.email}: {e}")
+        def _send_reset():
+            try:
+                send_password_reset_email(payload.email, reset_link)
+            except Exception as e:
+                logger.error(f"Failed to send password reset email to {payload.email}: {e}")
+        asyncio.create_task(asyncio.to_thread(_send_reset))
 
     return {"message": "If that email is registered, a password reset link has been sent."}
 

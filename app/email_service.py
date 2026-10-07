@@ -35,6 +35,35 @@ def _send_email_transport(
     Dispatches transactional email using either Resend API or Gmail SMTP.
     Prefers Resend if RESEND_API_KEY is present (ideal for deployed servers).
     """
+    # 1. Brevo REST API (Port 443 - allows sending to ANY email without requiring a custom domain)
+    brevo_api_key = os.environ.get("BREVO_API_KEY")
+    if brevo_api_key and brevo_api_key.strip():
+        sender_email = os.environ.get("BREVO_SENDER_EMAIL") or os.environ.get("GMAIL_ADDRESS") or "kunalsinghchouhan07@gmail.com"
+        sender_name = os.environ.get("BREVO_SENDER_NAME") or "Chatbot Platform"
+        headers = {
+            "api-key": brevo_api_key.strip(),
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        payload = {
+            "sender": {"email": sender_email.strip(), "name": sender_name.strip()},
+            "to": [{"email": to_email.strip()}],
+            "subject": subject,
+            "textContent": text_body,
+            "htmlContent": html_body,
+        }
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post("https://api.brevo.com/v3/smtp/email", headers=headers, json=payload)
+                if resp.status_code >= 400:
+                    raise RuntimeError(f"Brevo API error ({resp.status_code}): {resp.text}")
+            logger.info(f"Transactional email sent via Brevo to {to_email}")
+            return
+        except Exception as e:
+            logger.error(f"Failed to send email via Brevo to {to_email}: {e}")
+            raise e
+
+    # 2. Resend REST API (Port 443 - requires verified domain to send to non-account recipients)
     resend_api_key = os.environ.get("RESEND_API_KEY")
     if resend_api_key and resend_api_key.strip():
         from_email = os.environ.get("EMAIL_FROM") or "Chatbot Platform <onboarding@resend.dev>"
@@ -66,8 +95,8 @@ def _send_email_transport(
 
     if not gmail_address or not gmail_app_password:
         raise RuntimeError(
-            "Neither RESEND_API_KEY nor GMAIL_ADDRESS / GMAIL_APP_PASSWORD are set in .env. "
-            "Configure RESEND_API_KEY (recommended for cloud hosting) or Gmail credentials."
+            "No email credentials configured in .env. "
+            "Set BREVO_API_KEY (recommended, free, no domain needed), RESEND_API_KEY, or Gmail credentials."
         )
 
     msg = MIMEMultipart("alternative")
